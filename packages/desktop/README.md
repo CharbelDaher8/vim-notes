@@ -115,6 +115,30 @@ entire access story is "unreachable off the tailnet"; and a tailnet address can
 change, so baking it in at build time would mean rebuilding the app to move
 house.
 
+It is implemented in `packages/web/src/platform/server-origin.ts`, with the form
+in `packages/web/src/app/server-settings.tsx`. Precedence is stored value →
+`VITE_SERVER_ORIGIN` at build time → the page's own origin, which is only usable
+in a browser. Set a build-time default with:
+
+```sh
+VITE_SERVER_ORIGIN=http://100.64.0.1:8080 pnpm --filter @vim-notes/desktop build:app
+```
+
 So this package deliberately exposes **no commands and no IPC** beyond Tauri's
 built-in `core:default`. If that ever changes, `capabilities/default.json` is
 the file that has to grant it.
+
+### `withGlobalTauri` is on, and is load-bearing
+
+`app.withGlobalTauri: true` in `tauri.conf.json` puts the JS API on
+`window.__TAURI__`. `packages/web/src/platform/tauri-platform.ts` reaches the
+native side through that global rather than through `@tauri-apps/api`, which is
+not a dependency of the web package.
+
+Without it the webview looks exactly like a browser to the client: the host
+reports `kind: 'browser'`, falls back to `documentHost`, and the server-address
+form — the only way to configure the desktop build — never renders. So the app
+would ship unable to reach any server and with no UI to fix it.
+
+The alternative is adding `@tauri-apps/api` to `packages/web` and importing
+properly, which is tidier and needs an install.

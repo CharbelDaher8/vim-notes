@@ -208,6 +208,26 @@ describe('NodePtyTerminalHost', () => {
     // false to be true` is not a bug report. A short but otherwise perfect
     // prefix means the tail went missing as the child died; anything else means
     // bytes were altered or dropped mid-stream, which has a different cause.
+    //
+    // That description earned itself once already. This test failed on Linux CI
+    // and only there, and the sentence it produced -- "truncated: an exact
+    // prefix, 3397 of 200000 trailing bytes never arrived" -- settled in one run
+    // what the boolean could not: nothing was corrupting bytes, something below
+    // this adapter was dropping the end of the stream.
+    //
+    // It passes on Linux now, and nobody should read that as fixed. Neither the
+    // scrollback default nor the exit drain nor the transport's flow control can
+    // explain the change -- this test constructs no socket and never pauses --
+    // so the likeliest reading is that the fault is intermittent. The suspect is
+    // node-pty destroying the pty master 200ms after reaping the child, which
+    // fires when the event loop stalls that long and so shows up on a loaded
+    // runner and not an idle one. Nothing in this repository can prevent it: the
+    // bytes are gone before the adapter is told the child exited.
+    //
+    // So if this goes red on CI again with a shortfall that moves between runs,
+    // it is that, and the honest response is to record it rather than to hunt
+    // for a regression that is not here. `pty-truncation-diagnostic.test.ts`
+    // exists to tell those two cases apart.
     expect(describeAgainst(got, expected)).toBe('identical')
     expect(got.equals(expected)).toBe(true)
     expect(output.text()).toBe(content)

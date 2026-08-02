@@ -14,18 +14,34 @@
  *      N_TTY_BUF_SIZE (4096), and 3397 is under that. Predicts a stable
  *      shortfall under 4096 at every size.
  *
- * Neither. The loss was the transport pausing the pty for back pressure, and it
- * disappeared when that pause was removed -- see the terminal socket. The drain
- * window added alongside it is what made the failure legible enough to diagnose
- * in the first place, but the pause is what destroyed the bytes.
+ * **B is refuted.** `maxChunkSeen` on Linux is 36545 -- nine times the 4096 the
+ * inference rested on -- so "3397 bytes is one discarded read" never followed.
+ * Recorded so nobody re-derives it.
  *
- * Hypothesis B is also refuted on its own terms, which is worth recording so
- * nobody re-derives it: `maxChunkSeen` on Linux is 36545, nine times the 4096
- * the inference rested on, so "3397 is one discarded read" never followed.
+ * **A is not refuted, and is not confirmed either.** Linux now reports zero loss
+ * at every size, and it is tempting to read that as fixed. Be careful: nothing
+ * that changed between the failing run and the green one can explain it.
  *
- * It now asserts rather than reports, because a test that only prints cannot
- * catch this coming back -- and coming back is plausible, since anything that
- * reintroduces flow control on the pty reintroduces the bug.
+ *   - It is not the transport pausing the pty. That was a real bug, separately
+ *     measured at 0 of 700 bytes recovered, and worth removing -- but no test in
+ *     this file or in `node-pty-terminal-host.test.ts` constructs a socket or
+ *     calls `pause`, so it cannot have destroyed bytes here.
+ *   - It is not the scrollback default rising to 4MB. The payload that failed
+ *     was 200000 bytes against a 262144-byte ring: nothing was evicted either
+ *     way, and these tests read from `onBytes` rather than the ring regardless.
+ *   - It is not the drain window, which was already in place for the run that
+ *     lost 3397 bytes.
+ *
+ * What is left is that the failure is *intermittent*, which is exactly what A
+ * predicts: a race against an event loop stalled past node-pty's 200ms socket
+ * destroy fires on a loaded runner and not on an idle one. One green run cannot
+ * show the absence of an intermittent fault.
+ *
+ * So this asserts rather than reports, and the assertion is the point. If it
+ * goes red again on Linux with a shortfall that varies between runs, that is not
+ * a regression to hunt in this repository -- it is A, confirmed, and unfixable
+ * from here because node-pty destroys the bytes before the adapter is told
+ * anything. Read the table before assuming anyone broke something.
  *
  * Two things to leave alone:
  *
