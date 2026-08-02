@@ -14,9 +14,11 @@ import { procedure, router } from '../trpc'
 export const repoRouter = router({
   status: procedure.query(({ ctx }) => ctx.vcs.status()),
 
-  history: procedure.input(historyInput).query(({ ctx, input }) =>
-    ctx.vcs.log({ ...(input.path ? { path: input.path } : {}), limit: input.limit }),
-  ),
+  history: procedure
+    .input(historyInput)
+    .query(({ ctx, input }) =>
+      ctx.vcs.log({ ...(input.path ? { path: input.path } : {}), limit: input.limit }),
+    ),
 
   /** Returns the historical content without writing it; restoring is a write. */
   contentAt: procedure.input(restoreInput).query(async ({ ctx, input }) => {

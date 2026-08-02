@@ -17,8 +17,8 @@ edit notes with real local nvim.
 **Rejected:** a database with markdown in a column. Faster to query, but it traps
 the data in this application and makes the local-nvim escape hatch impossible.
 
-**Consequence to be honest about:** this app is a *hosted access layer over a git
-repo*. Its value is concentrated in machines you cannot or will not clone to —
+**Consequence to be honest about:** this app is a _hosted access layer over a git
+repo_. Its value is concentrated in machines you cannot or will not clone to —
 your phone, a locked-down work PC, a borrowed browser. On your own laptop, local
 nvim beats it on every axis.
 
@@ -31,7 +31,7 @@ nvim beats it on every axis.
 your laptop     an ordinary clone of ~/notes.git
 ```
 
-**Why:** with a laptop clone *and* a server that auto-commits, there are two
+**Why:** with a laptop clone _and_ a server that auto-commits, there are two
 independent writers to one history. Git handles the naive version of this badly:
 you cannot push to a non-bare repo whose branch is checked out, and
 `receive.denyCurrentBranch=updateInstead` only works when the working tree is
@@ -109,7 +109,7 @@ failure rather than a code-review convention.
 drag in a polyfill — and this is the one module where a polyfill's edge-case
 behaviour is a security bug rather than an inconvenience. `..` is rejected
 outright rather than resolved, which removes a whole category of traversal bug,
-and `.git` is blocked at any depth because the notes directory *is* a git repo
+and `.git` is blocked at any depth because the notes directory _is_ a git repo
 and a write to `.git/hooks/` would be remote code execution on next save. The
 filesystem adapter re-checks containment on the resolved path independently.
 

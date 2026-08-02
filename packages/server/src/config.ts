@@ -55,7 +55,11 @@ const schema = z.object({
   /** What the terminal runs. The product is nvim; this exists for tests. */
   TERMINAL_COMMAND: z.string().default('nvim'),
   /** Abandoned ptys are reaped after this long with nothing attached. */
-  TERMINAL_IDLE_TIMEOUT_MS: z.coerce.number().int().min(60_000).default(30 * 60_000),
+  TERMINAL_IDLE_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .default(30 * 60_000),
 
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })

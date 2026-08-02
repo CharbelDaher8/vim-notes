@@ -13,12 +13,7 @@ import type { TreeEntry } from '@vim-notes/core'
 // contract, and keeping it there lets the API layer map failures to status
 // codes without importing an adapter. Re-exported so adapter code can keep
 // importing its errors and its sort order from one place.
-export {
-  NotFoundError,
-  NoteStoreError,
-  PathEscapeError,
-  PathOccupiedError,
-} from '@vim-notes/core'
+export { NotFoundError, NoteStoreError, PathEscapeError, PathOccupiedError } from '@vim-notes/core'
 
 /**
  * Directories first, then case-insensitively by name -- what a file tree UI

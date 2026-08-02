@@ -53,7 +53,9 @@ export type WriteDecision = { ok: true } | { ok: false; conflict: WriteConflict 
 export function decideWrite(expected: ExpectedVersion, actual: ContentHash | null): WriteDecision {
   if (expected === null) {
     // Creating. Only valid if nothing is there.
-    return actual === null ? { ok: true } : { ok: false, conflict: { kind: 'already-exists', actual } }
+    return actual === null
+      ? { ok: true }
+      : { ok: false, conflict: { kind: 'already-exists', actual } }
   }
 
   if (actual === null) {

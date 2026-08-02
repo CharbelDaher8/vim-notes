@@ -24,9 +24,11 @@ export const notesRouter = router({
    * "someone else edited this" into the same channel as "the disk is full",
    * and the UI could not tell them apart.
    */
-  write: procedure.input(writeNoteInput).mutation(({ ctx, input }) =>
-    ctx.notes.write(input.path, input.content, input.force ? FORCE_WRITE : input.expected),
-  ),
+  write: procedure
+    .input(writeNoteInput)
+    .mutation(({ ctx, input }) =>
+      ctx.notes.write(input.path, input.content, input.force ? FORCE_WRITE : input.expected),
+    ),
 
   move: procedure.input(moveNoteInput).mutation(async ({ ctx, input }) => {
     if (input.from === input.to) return { moved: false }

@@ -130,7 +130,9 @@ export function parseNotePath(input: string): ParseResult<NotePath> {
 export function assertNotePath(input: string): NotePath {
   const result = parseNotePath(input)
   if (!result.ok) {
-    throw new Error(`invalid note path ${JSON.stringify(input)}: ${describeNotePathError(result.error)}`)
+    throw new Error(
+      `invalid note path ${JSON.stringify(input)}: ${describeNotePathError(result.error)}`,
+    )
   }
   return result.value
 }

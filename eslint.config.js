@@ -49,7 +49,12 @@ export default tseslint.config(
                 'core is the interior of the hexagon: no I/O, no Node builtins (it ships to the browser too). Put this behind a port and implement it in packages/server/src/adapters.',
             },
             {
-              group: ['@vim-notes/server', '@vim-notes/server/*', '@vim-notes/web', '@vim-notes/web/*'],
+              group: [
+                '@vim-notes/server',
+                '@vim-notes/server/*',
+                '@vim-notes/web',
+                '@vim-notes/web/*',
+              ],
               message: 'core must not depend on outer layers. Dependencies point inward only.',
             },
           ],
