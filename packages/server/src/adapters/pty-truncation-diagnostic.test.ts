@@ -37,6 +37,19 @@
  * destroy fires on a loaded runner and not on an idle one. One green run cannot
  * show the absence of an intermittent fault.
  *
+ * And A explains the platform split without needing anything exotic. What can be
+ * lost is bounded by what a child can leave unread when it is reaped, which is
+ * the pty's write capacity. Measured here: a child writing to a pty nobody reads
+ * finishes and exits at 1024 bytes and blocks at 2048, so macOS holds on the
+ * order of one kilobyte. Linux holds 64KB. The 3397 bytes that went missing are
+ * impossible on macOS and unremarkable on Linux.
+ *
+ * A corollary, so nobody repeats the experiment: A cannot be reproduced on macOS
+ * by stalling the event loop, and failing to reproduce it there says nothing.
+ * Tried, with every gap between reads blocked past 200ms -- zero loss in eleven
+ * runs, because there is never more than a kilobyte outstanding to lose and it
+ * drains in a single read. Demonstrating A needs that experiment on Linux.
+ *
  * So this asserts rather than reports, and the assertion is the point. If it
  * goes red again on Linux with a shortfall that varies between runs, that is not
  * a regression to hunt in this repository -- it is A, confirmed, and unfixable
