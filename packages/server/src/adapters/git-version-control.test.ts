@@ -7,7 +7,12 @@ import { promisify } from 'node:util'
 import { assertNotePath as notePath, type CommitRef, type SyncOutcome } from '@vim-notes/core'
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { GitVersionControl, parseLog, parseStatus } from './git-version-control'
+import {
+  classifyTransportFailure,
+  GitVersionControl,
+  parseLog,
+  parseStatus,
+} from './git-version-control'
 
 const execFileAsync = promisify(execFile)
 
@@ -596,7 +601,9 @@ describe('GitVersionControl.sync', () => {
     expect(await makeVcs(server).status()).toMatchObject({ dirty: true, behind: 1, ahead: 0 })
   }, 30_000)
 
-  it('reports a conflict when the hub rejects the push outright', async () => {
+  it('reports rejected, not conflict, when the hub refuses the push', async () => {
+    // Nothing on disk needs resolving here, so the UI must not be sent to a
+    // conflict screen the user cannot act on.
     const hub = await makeHub()
     const laptop = await makeClone(hub)
 
@@ -606,8 +613,53 @@ describe('GitVersionControl.sync', () => {
     await write(laptop, 'note.md', 'content\n')
     await makeVcs(laptop).commit('one')
 
-    const outcome = await makeVcs(laptop).sync()
-    expect(outcome).toEqual({ ok: false, reason: 'conflict', conflicted: [] })
+    const outcome = expectSyncFailed(await makeVcs(laptop).sync())
+    expect(outcome.reason).toBe('rejected')
+    expect(outcome).toHaveProperty('message', expect.stringMatching(/rejected|hook declined/i))
+  }, 30_000)
+
+  it('reports auth when the hub refuses our key', async () => {
+    // A stand-in for ssh that always refuses. This exercises git's real
+    // behaviour on a rejected credential rather than a hand-written stderr
+    // string, and needs no network and no keys.
+    const scripts = await makeTemporaryDirectory()
+    const ssh = nodePath.join(scripts, 'refusing-ssh.sh')
+    await fs.writeFile(
+      ssh,
+      '#!/bin/sh\necho "git@hub.example: Permission denied (publickey)." >&2\nexit 255\n',
+      { mode: 0o755 },
+    )
+
+    const root = await makeRepo()
+    await git(root, ['remote', 'add', 'origin', 'ssh://git@hub.example/notes.git'])
+    const vcs = new GitVersionControl(root, {
+      defaultAuthor: AUTHOR,
+      env: { ...HERMETIC_ENV, GIT_SSH_COMMAND: ssh },
+    })
+
+    await write(root, 'note.md', 'content')
+    await vcs.commit('one')
+
+    const outcome = expectSyncFailed(await vcs.sync())
+    expect(outcome.reason).toBe('auth')
+    // The message has to name the cause; git's own summary line for this is
+    // "Could not read from remote repository", which says nothing useful.
+    expect(outcome).toHaveProperty(
+      'message',
+      expect.stringContaining('Permission denied (publickey)'),
+    )
+  }, 30_000)
+
+  it('does not claim auth for a refused connection', async () => {
+    // Port 1 on loopback: refused immediately, with no DNS and no waiting.
+    const root = await makeRepo()
+    await git(root, ['remote', 'add', 'origin', 'https://127.0.0.1:1/notes.git'])
+    const vcs = makeVcs(root)
+
+    await write(root, 'note.md', 'content')
+    await vcs.commit('one')
+
+    expect(expectSyncFailed(await vcs.sync()).reason).toBe('network')
   }, 30_000)
 
   it('is a no-op when neither side has any commits yet', async () => {
@@ -628,6 +680,39 @@ describe('GitVersionControl.sync', () => {
 
     expect(await makeVcs(laptop).sync()).toEqual({ ok: true, pulled: 0, pushed: 0 })
   }, 30_000)
+})
+
+describe('classifyTransportFailure', () => {
+  it.each([
+    'git@hub.example: Permission denied (publickey).',
+    'git@hub.example: Permission denied (publickey,keyboard-interactive).',
+    'Permission denied, please try again.',
+    "fatal: Authentication failed for 'https://hub.example/notes.git/'",
+    "fatal: could not read Username for 'https://hub.example': terminal prompts disabled",
+    "fatal: could not read Password for 'https://u@hub.example': terminal prompts disabled",
+    'remote: Invalid username or password.',
+  ])('recognises a credential failure: %s', (line) => {
+    const stderr = `${line}\nfatal: Could not read from remote repository.\n`
+    expect(classifyTransportFailure(stderr)).toEqual({ reason: 'auth', message: line })
+  })
+
+  it.each([
+    "fatal: unable to access 'https://hub.example/notes.git/': Could not resolve host: hub.example",
+    'ssh: connect to host hub.example port 22: Connection timed out',
+    'ssh: connect to host hub.example port 22: Connection refused',
+    "fatal: 'origin' does not appear to be a git repository",
+    'fatal: the remote end hung up unexpectedly',
+    // Bare "Permission denied" is what a local path remote says about a
+    // directory it cannot read. That is not a credential problem, and calling
+    // it one would strand a sync that a retry might well fix.
+    'error: cannot open .git/FETCH_HEAD: Permission denied',
+  ])('stays with network when the cause is not clearly credentials: %s', (line) => {
+    expect(classifyTransportFailure(`${line}\n`).reason).toBe('network')
+  })
+
+  it('reports nothing useful as network rather than guessing', () => {
+    expect(classifyTransportFailure('').reason).toBe('network')
+  })
 })
 
 describe('parsers', () => {

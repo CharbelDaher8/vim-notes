@@ -25,8 +25,25 @@ export interface RepoStatus {
 
 export type SyncOutcome =
   | { ok: true; pulled: number; pushed: number }
+  /** A rebase left conflict markers; these paths need a human. */
   | { ok: false; reason: 'conflict'; conflicted: NotePath[] }
-  | { ok: false; reason: 'no-remote' | 'network' | 'dirty'; message: string }
+  /**
+   * The hub moved between our fetch and our push, so the push was refused with
+   * nothing on disk to resolve. This is the race the bare-hub topology invites
+   * -- a laptop clone pushing while the server was mid-sync -- and it is
+   * distinct from 'conflict': retrying usually fixes it, and no file needs
+   * attention. Folding it into 'conflict' with an empty path list would make
+   * the UI offer a resolution screen for something the user cannot act on.
+   */
+  | { ok: false; reason: 'rejected'; message: string }
+  /**
+   * 'auth' is separated from 'network' because they need opposite responses: a
+   * bad deploy key will never succeed on retry and needs a human to fix
+   * credentials, whereas a transient transport failure should just be retried.
+   * Detection is necessarily heuristic on git's stderr, so implementations
+   * should fall back to 'network' when unsure rather than guess.
+   */
+  | { ok: false; reason: 'no-remote' | 'network' | 'auth' | 'dirty'; message: string }
 
 /**
  * Git, exposed only as far as this app needs it.

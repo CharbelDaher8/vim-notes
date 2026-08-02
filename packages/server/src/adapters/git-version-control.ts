@@ -677,6 +677,51 @@ function summarizeStderr(stderr: string): string {
   return (diagnostic ?? meaningful[0] ?? '').trim()
 }
 
+/**
+ * Credential failures git reports in a form specific enough to act on. Each
+ * pattern names a rejected identity rather than a failed connection, which is
+ * what keeps a transient outage from being reported as a permanent one.
+ *
+ * `Permission denied` is matched only in its ssh authentication forms. Bare
+ * `Permission denied` is also what a local filesystem remote says about a
+ * unreadable directory, and that is not a credential problem.
+ */
+const AUTH_FAILURE_PATTERNS = [
+  /Permission denied \(publickey/i,
+  /Permission denied, please try again/i,
+  /Authentication failed/i,
+  /could not read Username/i,
+  /could not read Password/i,
+  /Invalid username or password/i,
+]
+
+/**
+ * Split a failed fetch or push into a credential problem and everything else.
+ *
+ * Deliberately biased towards 'network'. The two reasons call for opposite
+ * responses -- retry versus fetch a human -- so a wrong 'auth' strands a sync
+ * that would have recovered on its own, while a wrong 'network' only costs a
+ * retry that fails the same way. Anything not clearly about credentials is
+ * therefore left alone.
+ */
+export function classifyTransportFailure(stderr: string): {
+  reason: 'auth' | 'network'
+  message: string
+} {
+  const lines = stderr.split('\n').map((line) => line.trim())
+
+  for (const pattern of AUTH_FAILURE_PATTERNS) {
+    const matched = lines.find((line) => pattern.test(line))
+    if (matched !== undefined) {
+      // The matching line is the diagnosis. git's own summary line for these is
+      // "Could not read from remote repository", which hides the actual cause.
+      return { reason: 'auth', message: matched }
+    }
+  }
+
+  return { reason: 'network', message: summarizeStderr(stderr) }
+}
+
 function isPushRejected(stderr: string): boolean {
   return /\[(remote )?rejected\]|non-fast-forward|fetch first|stale info|failed to push/i.test(
     stderr,
