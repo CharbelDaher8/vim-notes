@@ -97,9 +97,35 @@ export function createSimulationLoop({
     frame = host.requestFrame(tick)
   }
 
+  /**
+   * Run the layout to a standstill in one go and paint the result.
+   *
+   * For when there is nobody to animate for. Skipping the work instead was a
+   * real bug: a page that renders while hidden and is never *switched* to gets
+   * no `visibilitychange`, so the loop that was waiting for one never starts
+   * and the graph stays on its seeded scatter for good. That is not a corner
+   * case -- it is what a background tab, a restored session and every
+   * screenshot tool do, and it is how this was found.
+   *
+   * Solving costs one pass rather than a hundred and fifty frames, so it is
+   * also the cheaper answer, which is the whole reason the loop stops when
+   * hidden in the first place.
+   */
+  const solve = () => {
+    while (!isSettled(layout)) step(layout)
+    draw(layout)
+    setRunning(false)
+  }
+
   return {
     start: () => {
-      if (stopped || frame !== 0 || host.isHidden() || isSettled(layout)) return
+      if (stopped || frame !== 0 || isSettled(layout)) return
+
+      if (host.isHidden()) {
+        solve()
+        return
+      }
+
       setRunning(true)
       frame = host.requestFrame(tick)
     },

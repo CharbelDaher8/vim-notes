@@ -228,6 +228,56 @@ describe('when the tab is hidden', () => {
     expect(loop.isRunning()).toBe(false)
   })
 
+  /**
+   * Found in a browser, not here: a page that renders in a background tab and
+   * is screenshotted without ever being switched to gets no `visibilitychange`
+   * at all. Waiting for one meant the layout stayed on its seeded scatter for
+   * good -- which read as a graph whose forces were not running, because none
+   * of them ever had been.
+   */
+  it('solves the layout instead of waiting, when there is nobody to animate for', () => {
+    const fake = fakeHost()
+    fake.hide()
+    const layout = moving()
+    const draw = vi.fn()
+
+    const loop = createSimulationLoop({ layout, draw, host: fake.host })
+    loop.start()
+
+    expect(isSettled(layout)).toBe(true)
+    expect(layout.ticks).toBeGreaterThan(1)
+    // Once, at the end. Painting every intermediate step would be the cost the
+    // loop stops for, paid without the benefit anyone would see.
+    expect(draw).toHaveBeenCalledTimes(1)
+    expect(fake.booked()).toBe(0)
+    expect(loop.isRunning()).toBe(false)
+  })
+
+  it('has nothing left to do when the tab is finally shown', () => {
+    const fake = fakeHost()
+    fake.hide()
+    const layout = moving()
+    const loop = createSimulationLoop({ layout, draw: () => {}, host: fake.host })
+
+    loop.start()
+    fake.show()
+    loop.start()
+
+    expect(fake.booked()).toBe(0)
+  })
+
+  it('still refuses to solve after stop', () => {
+    const fake = fakeHost()
+    fake.hide()
+    const layout = moving()
+    const loop = createSimulationLoop({ layout, draw: () => {}, host: fake.host })
+
+    loop.stop()
+    loop.start()
+
+    expect(layout.ticks).toBe(0)
+  })
+
   it('picks up where it left off when the tab comes back', () => {
     const fake = fakeHost()
     const layout = moving()
