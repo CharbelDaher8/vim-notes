@@ -1,0 +1,37 @@
+# The build context is the repository root, so everything not needed to build
+# the server and the web client is excluded -- both for speed and so that a
+# stale local artefact can never end up inside an image.
+
+node_modules
+**/node_modules
+
+dist
+**/dist
+build
+**/build
+*.tsbuildinfo
+
+# The image builds its own install; a host .git would add tens of megabytes of
+# history to the context for nothing.
+.git
+.gitignore
+
+# Local notes and runtime state. NOTES_ROOT is a mount at run time, never
+# something baked into an image.
+notes-dev
+data
+
+# rust / tauri
+target
+**/target
+packages/desktop/src-tauri/gen
+
+# Secrets: .env holds host paths and the tailnet address.
+.env
+.env.local
+deploy/.env
+
+*.log
+.DS_Store
+.idea
+.vscode

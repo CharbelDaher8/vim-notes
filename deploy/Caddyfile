@@ -1,0 +1,71 @@
+# Reverse proxy for the vim-notes stack.
+#
+# Caddy terminates the connection on the tailnet address (see the ports mapping
+# in docker-compose.yml), serves the built web client, and forwards the API and
+# the terminal WebSocket to the server container.
+
+{
+	# No public hostname and no certificate authority to talk to. Left on, Caddy
+	# would try to provision a certificate for a name that resolves only inside
+	# a tailnet and retry forever. Traffic here is already inside WireGuard.
+	#
+	# To expose this publicly later: give the site block a real hostname, delete
+	# this line, and add authentication in front of /term/ws -- see DECISIONS §11.
+	auto_https off
+
+	# Nothing needs the admin API, and it listens on all interfaces by default.
+	admin off
+}
+
+:80 {
+	log {
+		output stderr
+		format console
+	}
+
+	encode zstd gzip
+
+	# --- tRPC API ------------------------------------------------------------
+	#
+	# Assumes the router is mounted at /trpc. Confirm against the composition
+	# root when it lands -- if it moves, this silently starts serving index.html
+	# to the API client instead, which surfaces as JSON parse errors.
+	handle /trpc/* {
+		reverse_proxy server:4321
+	}
+
+	# --- terminal WebSocket --------------------------------------------------
+	#
+	# There is deliberately nothing here but the proxy line.
+	#
+	# Caddy v2 forwards Upgrade and Connection itself and hijacks the connection
+	# for anything that negotiates a protocol switch. The usual way this gets
+	# broken is by "helpfully" adding `header_up Upgrade {>Upgrade}` and
+	# `header_up Connection upgrade` copied from an nginx config: in Caddy those
+	# set the headers a second time, and a duplicated Connection header makes the
+	# upgrade fail. It fails quietly, too -- the client just sees the socket
+	# close, and xterm.js shows an empty black rectangle with no error.
+	#
+	# Timeouts are left at their defaults, which are zero. A terminal session
+	# sits idle for hours between keystrokes, so any read timeout here would
+	# disconnect an editor someone had left open.
+	#
+	# The matcher is the exact path `/term/ws` (see DEFAULT_PATH in
+	# src/ws/terminal-socket.ts) and not a `/term/*` prefix, because `/term` is
+	# also a client-side route: a prefix match here would send the page request
+	# for the terminal UI to the WebSocket endpoint and never serve the app.
+	handle /term/ws {
+		reverse_proxy server:4321
+	}
+
+	# --- web client ----------------------------------------------------------
+	handle {
+		root * /srv/web
+
+		# The client owns its routes -- `/term` is a client route, not a file on
+		# disk -- so anything that is not a real asset falls through to the SPA
+		# entry point rather than 404ing.
+		try_files {path} /index.html
+		file_server
+	}
+}
