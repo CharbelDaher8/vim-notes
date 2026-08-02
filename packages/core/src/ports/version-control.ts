@@ -15,9 +15,9 @@ export interface RepoStatus {
   branch: string
   /** True when the working tree has changes not yet committed. */
   dirty: boolean
-  /** Commits on the local branch not yet on the hub. */
+  /** Commits on the local branch not yet on the remote. */
   ahead: number
-  /** Commits on the hub not yet pulled. */
+  /** Commits on the remote not yet pulled. */
   behind: number
   /** Non-empty when a rebase or merge left conflict markers on disk. */
   conflicted: NotePath[]
@@ -28,8 +28,8 @@ export type SyncOutcome =
   /** A rebase left conflict markers; these paths need a human. */
   | { ok: false; reason: 'conflict'; conflicted: NotePath[] }
   /**
-   * The hub moved between our fetch and our push, so the push was refused with
-   * nothing on disk to resolve. This is the race the bare-hub topology invites
+   * The remote moved between our fetch and our push, so the push was refused
+   * with nothing on disk to resolve. This is the race any shared remote invites
    * -- a laptop clone pushing while the server was mid-sync -- and it is
    * distinct from 'conflict': retrying usually fixes it, and no file needs
    * attention. Folding it into 'conflict' with an empty path list would make
@@ -48,11 +48,14 @@ export type SyncOutcome =
 /**
  * Git, exposed only as far as this app needs it.
  *
- * The notes directory is a working copy whose hub is a bare repo; `sync` is
- * pull --rebase followed by push. Conflicts are returned rather than thrown for
- * the same reason as in NoteStore: with a laptop clone and a server working copy
- * both committing, conflicts are a normal outcome and the UI has to surface
- * them.
+ * The notes directory is an ordinary clone of a shared remote (DECISIONS.md
+ * §2); `sync` is pull --rebase followed by push. Conflicts are returned rather
+ * than thrown for the same reason as in NoteStore: with a laptop clone and a
+ * server working copy both committing, conflicts are a normal outcome and the
+ * UI has to surface them.
+ *
+ * Nothing here names GitHub, and it should not. The port describes a remote, and
+ * the only thing that changes if the remote moves back on-premise is the URL.
  */
 export interface VersionControl {
   /** Returns null when there was nothing to commit. */

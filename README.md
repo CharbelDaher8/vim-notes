@@ -16,7 +16,7 @@ even if the whole stack goes away: `git clone` and they are all there.
 | desktop app | macOS / Windows  | thin Tauri shell around the same web client, mainly for keyboard capture                    |
 
 Both clients read and write the same `~/notes/*.md` directory. Saves
-auto-commit and push to a bare hub, so a laptop clone is a first-class way to
+auto-commit and push to a private GitHub repo, so a laptop clone is a first-class way to
 work too.
 
 ## Layout

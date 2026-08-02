@@ -108,15 +108,49 @@ jobs:
       - name: Verify
         run: pnpm verify
 
-  # Split out because it needs git and nothing else: no node, no install, no
-  # registry. It therefore still reports on a day when the registry is down,
-  # which is exactly when you want to know the deploy path is intact.
-  post-receive-hook:
+  # Replaces the post-receive hook job, which went with the hub (DECISIONS §2).
+  #
+  # Kept for the same reason that one earned its place: it touches no registry,
+  # so it still reports on a day when npm is down -- which is exactly when you
+  # want to know the deploy path is intact. It also closes a gap that was open
+  # the whole time the hub existed: the compose file had never been checked by
+  # the real tool, only parsed as YAML, because the compose plugin was not
+  # installed on the machine it was written on.
+  deploy-config:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@v5
 
-      - name: Exercise the hub post-receive hook
-        run: ./deploy/test-hook.sh
+      - name: Shell scripts parse
+        run: bash -n deploy/bootstrap.sh
+
+      # Copying the example into place is the point, not a workaround: the
+      # compose file fails on any `${VAR:?}` it cannot resolve, so this asserts
+      # that .env.example actually contains every variable a deployment needs.
+      # A new required setting that nobody documented fails here.
+      - name: Compose file resolves against .env.example
+        run: |
+          cp deploy/.env.example deploy/.env
+          docker compose -f deploy/docker-compose.yml config >/dev/null
+
+      # The one line that decides who can reach a WebSocket onto a real shell.
+      # Cheap to assert, catastrophic to get wrong, and easy to break by
+      # accident while editing something unrelated nearby.
+      - name: Server publishes no ports and Caddy binds one address
+        run: |
+          cp deploy/.env.example deploy/.env
+          docker compose -f deploy/docker-compose.yml config --format json \
+            | python3 -c '
+          import json, sys
+          services = json.load(sys.stdin)["services"]
+          if services["server"].get("ports"):
+              sys.exit("server publishes ports; it must only be reachable on the compose network")
+          published = [p.get("host_ip") for p in services["caddy"].get("ports", [])]
+          if not published:
+              sys.exit("caddy publishes nothing, so the stack is unreachable")
+          if any(ip in (None, "", "0.0.0.0", "::") for ip in published):
+              sys.exit(f"caddy is bound to every interface ({published}); it must bind one address")
+          print(f"ok: server unpublished, caddy bound to {published}")
+          '

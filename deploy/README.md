@@ -1,46 +1,99 @@
 # Deploying vim-notes
 
-A single host running two containers, a bare git hub, and nothing on the public
-internet.
+A single host running two containers, a clone of a private GitHub repository,
+and nothing on the public internet.
 
 ```
-your laptop ──push──┐
-                    │  ssh over tailscale
-                    ▼
-        ~/notes.git  ── post-receive ──▶ ~/notes
-        (bare hub)                       (working copy)
-                                              │
-                                              │ bind mount
-                                              ▼
-                    caddy ──────────────▶ server container
-              (tailnet address only)     (nvim, git, ripgrep)
+your laptop ──push──┐                    ┌──── pull/push every 60s
+                    ▼                    ▼
+            github.com/you/notes (private)
+                    ▲
+                    │  deploy key, ssh
+                    │
+        ~/notes  ───┘   server working copy (an ordinary clone)
+            │
+            │ bind mount
+            ▼
+   caddy ──────────▶ server container
+ (tailnet only)      (nvim, git, ripgrep)
 ```
 
-The hub and the working copy live on the **host**, not in a volume, because
-your laptop pushes to the hub over ssh and the hook that follows that push runs
-as your user. The containers mount them.
+The notes directory lives on the **host** and is bind-mounted, so you can work
+in it directly over ssh as well as through the app.
 
 ## Bootstrap
 
+Create a **private** repository on GitHub first — empty is fine, the first sync
+pushes into it.
+
+```sh
+ssh-keygen -t ed25519 -N '' -C vim-notes -f /srv/vim-notes/deploy-key
+chmod 600 /srv/vim-notes/deploy-key
+cat /srv/vim-notes/deploy-key.pub
+```
+
+Add that public key to the repository under **Settings → Deploy keys → Add
+deploy key**, with **Allow write access** ticked. Then:
+
 ```sh
 cp deploy/.env.example deploy/.env
-$EDITOR deploy/.env            # paths, your uid/gid, your tailnet address
+$EDITOR deploy/.env            # repo URL, key path, uid/gid, tailnet address
 
-./deploy/bootstrap.sh          # creates the hub + working copy, installs the hook
+./deploy/bootstrap.sh          # clones the repo and checks the key works
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-`bootstrap.sh` is safe to re-run; it checks before every step.
-
-Then clone it on the laptop, exactly as the bootstrap output tells you:
+`bootstrap.sh` is safe to re-run and checks before every step. On the laptop:
 
 ```sh
-git clone ssh://you@your-host/srv/vim-notes/notes.git notes
+git clone git@github.com:you/notes.git notes
 ```
 
-From then on the laptop is an ordinary clone. `git push` sends notes to the hub
-and the working copy follows within the same second; `git pull` collects
-whatever you wrote on your phone.
+From then on both are ordinary clones. `git push` sends notes to GitHub; the
+server picks them up on its next poll.
+
+## Why a deploy key rather than a token
+
+A deploy key is scoped to **one repository**, which a personal access token is
+not — a classic PAT can reach everything the account can, and even a fine-grained
+one is an account credential pointed at a repo. It also does not expire, so sync
+does not silently stop working in a year.
+
+The practical difference is where the secret ends up. An HTTPS token has to be
+embedded in the remote URL or a credential file, which writes it into
+`notes/.git/config` — inside the notes directory, which is the thing being
+backed up and cloned around. The deploy key stays a mounted file that nothing
+copies.
+
+`GIT_TERMINAL_PROMPT=0` is set for every git subprocess, so a missing or
+rejected credential fails immediately instead of hanging on a password prompt
+nobody is there to answer.
+
+**Host keys** are trusted on first use (`StrictHostKeyChecking=accept-new`) and
+recorded in `/state/known_hosts` in the `nvim-state` volume. To pin them
+instead, `ssh-keyscan github.com > known_hosts`, mount that file read-only, and
+point `GIT_KNOWN_HOSTS_PATH` at it — stronger, at the cost of breaking when
+GitHub rotates a key.
+
+## Syncing
+
+The server polls: `SYNC_INTERVAL_MS`, default 60s, minimum 5s, `0` to disable.
+
+Polling rather than a webhook because the server is tailnet-only and GitHub
+cannot reach it — the honest cost of the topology in DECISIONS §2, and the one
+thing the old bare-hub setup did better.
+
+Each cycle flushes any pending auto-commit first, then calls `sync()`
+(fetch → rebase → push). Failures are classified rather than retried blindly:
+
+| Outcome                         | What the scheduler does                    |
+| ------------------------------- | ------------------------------------------ |
+| `dirty`                         | retries next cycle; a save landed mid-sync |
+| `network`, `rejected`           | backs off, doubling to a 30 minute ceiling |
+| `auth`, `conflict`, `no-remote` | backs off and logs loudly — needs a human  |
+
+Nothing stops the loop. A failure is logged once and not repeated until the
+situation changes, because a log that repeats itself is one people stop reading.
 
 ## The three settings that matter
 
@@ -49,14 +102,13 @@ entire access control story. `/term` is a WebSocket onto a real shell, so
 DECISIONS §11 chooses "not reachable" over "reachable behind a password". The
 default is `127.0.0.1`, so a missing `.env` fails closed.
 
-**`DOCKER_USER`** — `id -u`:`id -g` of the user that owns the notes directory.
-The hook runs on the host as you and the container writes the same files; if
-the uids differ, git refuses the repository as owned by someone else.
+**`DOCKER_USER`** — `id -u`:`id -g` of the user that owns the notes directory
+and can read the deploy key. Git refuses a repository owned by someone else.
 
-**`NOTES_DIR` / `HUB_DIR`** — absolute host paths, mounted into the container at
-_the same paths_. `notes/.git/config` records `origin` as an absolute path, and
-that one file is read from both the host and the container, so the hub has to
-be at one address that works for both.
+**`GIT_REMOTE_URL`** — where notes are pushed. Note that `bootstrap.sh` only
+clones when the directory is absent, so **editing this afterwards does nothing**
+on its own; the server reports the disagreement at boot, and repointing is a
+deliberate `git remote set-url`.
 
 ## Making it public later
 
@@ -69,30 +121,7 @@ both of:
 
 Doing only the first publishes a shell. The Caddyfile marks the spot.
 
-## The post-receive hook
-
-`hub/post-receive` fast-forwards the working copy after a push. Its whole design
-is that it is allowed to give up:
-
-- **Working copy dirty?** It does nothing. The server's auto-committer is
-  probably mid-write, and stashing under a live editor loses paragraphs.
-- **Working copy has its own commits?** It does nothing. `--ff-only` refuses,
-  and the server's `sync()` rebases and pushes them properly.
-- **Anything else fails?** It still exits 0. The refs are already updated by the
-  time the hook runs, so reporting failure would be a lie about the push.
-
-It never stashes, never `reset --hard`, and never rebases — a rebase would leave
-conflict markers on disk that the auto-committer would then commit as the note's
-content.
-
-Run `./deploy/test-hook.sh` to check it against real repositories in a temp
-directory: it covers a clean fast-forward, an uncommitted edit surviving a push,
-local commits surviving a push, and a branch deletion checking nothing out.
-
 ## Routes the proxy has to know about
-
-Caddy forwards two paths to the server and serves everything else from the
-built client:
 
 | Path       | Goes to     | Note                                    |
 | ---------- | ----------- | --------------------------------------- |
@@ -106,29 +135,38 @@ match would send that page request to the WebSocket endpoint and never serve the
 app. If either path changes on the server, this is the file that has to change
 with it, and the failure is silent in both directions.
 
+## What the server checks at boot
+
+`packages/server/src/preflight.ts` runs before the first request and reports:
+
+- `git`, `rg` and nvim — resolved path and version. Missing git is fatal;
+  the other two degrade with a warning.
+- The notes root exists, is writable, and is **the root of its own repository**
+  rather than a subdirectory of another one.
+- `origin` is configured, answers, and matches `GIT_REMOTE_URL`.
+
+Remote problems are warnings, not refusals: a box should still serve its own
+notes while GitHub is down.
+
 ## Notes on the images
 
 **nvim comes from the official release tarball**, not from Debian, whose nvim is
 old enough that a modern `init.lua` will not load. Pin `NVIM_RELEASE` in the
-Dockerfile to a tag rather than `stable` if you want rebuilds to be reproducible.
+Dockerfile to a tag rather than `stable` if you want reproducible rebuilds.
 
-**The server bundle inlines `@vim-notes/core`.** tsup treats workspace packages
-as external, and core's entry is `./src/index.ts`, so without `noExternal` the
-build produces a bundle that asks plain `node` to import TypeScript — the image
-would exit on its first import. That is handled in
-`packages/server/tsup.config.ts`, so the normal build script is all this
-Dockerfile needs. node-pty stays external, being a native module.
+**`openssh-client` is installed deliberately.** Git does not bundle ssh, and
+without it every push fails with a message about a missing transport.
 
-**`nvim-state` is a named volume.** Plugins, shada and undo history live there.
-None of it is worth backing up — your notes are in git, which is the point.
+**`nvim-state` is a named volume.** Plugins, shada, undo history and the ssh
+known_hosts file live there. None of it is worth backing up.
 
 ## Backups
 
-The hub is the thing to back up, and `git clone --mirror` is the whole job:
+The whole point of §2: GitHub is the offsite copy, and every clone is a complete
+one. To take another:
 
 ```sh
-git clone --mirror /srv/vim-notes/notes.git notes-backup.git
+git clone --mirror git@github.com:you/notes.git notes-backup.git
 ```
 
-Every clone is already a full backup, so a laptop that pulls regularly is one
-too. The GitHub mirror in DECISIONS' open questions would make this automatic.
+A laptop that pulls regularly is already a full backup.

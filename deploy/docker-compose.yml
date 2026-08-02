@@ -22,9 +22,9 @@ services:
     stop_grace_period: 30s
 
     # Runs as you, not as root. The notes directory is a bind mount from the
-    # host, and the hub's post-receive hook runs on the host as your user, so
-    # anything else produces a directory the two halves fight over. `git` also
-    # refuses to operate on a repository owned by a different user.
+    # host and you will want to work in it directly -- `git` refuses to operate
+    # on a repository owned by someone else, and the deploy key mounted below
+    # has to be readable by whoever this process turns out to be.
     #   DOCKER_USER="$(id -u):$(id -g)" in .env
     user: ${DOCKER_USER:?set DOCKER_USER in .env, e.g. "$(id -u):$(id -g)"}
 
@@ -43,6 +43,21 @@ services:
       GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-vim-notes}
       GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-vim-notes@localhost}
 
+      # Only so preflight can notice `origin` disagreeing with it. The server
+      # pushes to whatever the clone already points at.
+      GIT_REMOTE_URL: ${GIT_REMOTE_URL:?set GIT_REMOTE_URL in .env}
+
+      # Read-only mount, below. Never copied into the image.
+      GIT_SSH_KEY_PATH: /run/secrets/notes-deploy-key
+      # ssh has nowhere to record host keys otherwise: the container runs as a
+      # host uid with no home directory of its own.
+      GIT_KNOWN_HOSTS_PATH: /state/known_hosts
+
+      # How often to pull and push. This is what replaced the hub's
+      # post-receive hook: the server is tailnet-only, so GitHub cannot call us
+      # and we have to ask. 0 disables polling.
+      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-60000}
+
       # Set WATCH_POLLING=true in .env when NOTES_DIR is a bind mount from a
       # macOS or Windows host, or a network filesystem. Native recursive
       # watching drops events on all of those and fails silently -- the watcher
@@ -54,12 +69,14 @@ services:
       NODE_ENV: production
 
     volumes:
-      # Host path == container path, deliberately. `notes/.git/config` records
-      # `origin` as an absolute path and that one file is read by both the
-      # container and the host's post-receive hook, so the hub has to be
-      # reachable at the same path from both or one of them breaks.
+      # Host path == container path. Not load-bearing any more now that the
+      # remote is a URL rather than a path on disk, but kept because it makes
+      # every path in a log or a stack trace mean the same thing on both sides.
       - ${NOTES_DIR}:${NOTES_DIR}
-      - ${HUB_DIR:?set HUB_DIR in .env}:${HUB_DIR}
+
+      # The deploy key. Read-only, and a file rather than an environment
+      # variable so it cannot show up in `docker inspect` or a crash dump.
+      - ${GIT_SSH_KEY_PATH:?set GIT_SSH_KEY_PATH in .env}:/run/secrets/notes-deploy-key:ro
 
       # Your init.lua and plugins. Read-only: the editor may load from here, it
       # may not rewrite your config, and a plugin manager writing into a mount

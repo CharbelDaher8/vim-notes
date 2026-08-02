@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 #
-# Creates the git topology from DECISIONS §2 on the server host: a bare hub, a
-# working copy cloned from it, and the post-receive hook that keeps the second
-# following the first.
+# Prepares the server host: clones the notes repository and checks the deploy
+# key is usable.
 #
-# Runs on the host rather than in a container, because the hub is what your
-# laptop pushes to over ssh and the hook has to run as the user that owns the
-# files. Safe to re-run: every step checks before it acts.
+# Much shorter than it used to be. The previous topology needed a bare hub, a
+# post-receive hook and two repositories on this box; with GitHub as the remote
+# (DECISIONS §2) the working copy is an ordinary clone and there is nothing to
+# wire together.
 #
-#   ./deploy/bootstrap.sh                       # uses deploy/.env
-#   NOTES_DIR=/srv/notes HUB_DIR=/srv/notes.git ./deploy/bootstrap.sh
+# Safe to re-run: every step checks before it acts.
+#
+#   ./deploy/bootstrap.sh
 
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 
-# .env is the same file docker compose reads, so the paths cannot drift apart.
+# .env is the same file docker compose reads, so the two cannot disagree.
 if [ -f "$here/.env" ]; then
 	set -a
 	# shellcheck disable=SC1091
@@ -24,72 +25,99 @@ if [ -f "$here/.env" ]; then
 fi
 
 NOTES_DIR="${NOTES_DIR:?set NOTES_DIR in deploy/.env}"
-HUB_DIR="${HUB_DIR:?set HUB_DIR in deploy/.env}"
+GIT_REMOTE_URL="${GIT_REMOTE_URL:?set GIT_REMOTE_URL in deploy/.env}"
 NOTES_BRANCH="${NOTES_BRANCH:-main}"
 GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-vim-notes}"
 GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-vim-notes@localhost}"
+GIT_SSH_KEY_PATH="${GIT_SSH_KEY_PATH:-}"
 
 say() { printf '%s\n' "$*"; }
+die() {
+	printf 'error: %s\n' "$*" >&2
+	exit 1
+}
 
-# --- the hub -----------------------------------------------------------------
+# --- the deploy key ----------------------------------------------------------
 
-if [ -d "$HUB_DIR" ]; then
-	say "hub already exists at $HUB_DIR"
-else
-	say "creating bare hub at $HUB_DIR"
-	git init --quiet --bare -b "$NOTES_BRANCH" "$HUB_DIR"
+if [ -n "$GIT_SSH_KEY_PATH" ]; then
+	[ -f "$GIT_SSH_KEY_PATH" ] || die "no deploy key at $GIT_SSH_KEY_PATH"
+
+	# ssh refuses a key others can read, and reports it in a way that reads like
+	# a network problem. Catch it here, where the fix is obvious.
+	mode="$(stat -c '%a' "$GIT_SSH_KEY_PATH" 2>/dev/null || stat -f '%Lp' "$GIT_SSH_KEY_PATH")"
+	case "$mode" in
+	600 | 400) ;;
+	*) die "deploy key $GIT_SSH_KEY_PATH is mode $mode; run: chmod 600 $GIT_SSH_KEY_PATH" ;;
+	esac
+
+	# The same command the server will use, so a key that works here works there.
+	export GIT_SSH_COMMAND="ssh -i '$GIT_SSH_KEY_PATH' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+	say "using deploy key $GIT_SSH_KEY_PATH"
 fi
 
-# Refuse a push that would discard history. The hub is the only copy every other
-# clone agrees on, and until the GitHub mirror in DECISIONS' open questions
-# exists it is also the only offsite one, so a force-push into it is almost
-# always a mistake made at 2am rather than an intention.
-#
-# Branch *deletion* is left allowed on purpose: `receive.denyDeletes` would also
-# block tidying up a scratch branch, which is a normal thing to want, and losing
-# main to an accidental delete is not a plausible slip.
-git -C "$HUB_DIR" config receive.denyNonFastForwards true
-
-# How the hook finds the working copy. A push arrives over ssh with none of the
-# pusher's environment, so this has to be recorded rather than exported.
-git -C "$HUB_DIR" config notes.worktree "$NOTES_DIR"
-
-say "installing post-receive hook"
-install -m 0755 "$here/hub/post-receive" "$HUB_DIR/hooks/post-receive"
+# Never sit at a credential prompt: this may run unattended from a provisioning
+# script, and hanging forever is worse than failing.
+export GIT_TERMINAL_PROMPT=0
 
 # --- the working copy --------------------------------------------------------
 
 if [ -d "$NOTES_DIR/.git" ]; then
 	say "working copy already exists at $NOTES_DIR"
-else
-	say "cloning working copy to $NOTES_DIR"
-	git clone --quiet "$HUB_DIR" "$NOTES_DIR" 2>/dev/null
 
-	# Cloning an empty hub leaves HEAD wherever the local git's default branch
-	# points, which is not necessarily $NOTES_BRANCH.
+	actual="$(git -C "$NOTES_DIR" remote get-url origin 2>/dev/null || echo '')"
+	if [ "$actual" != "$GIT_REMOTE_URL" ]; then
+		# Not corrected automatically: repointing somebody's notes at a different
+		# repository is not a decision a bootstrap script should make on its own.
+		say ""
+		say "warning: origin is $actual"
+		say "         but GIT_REMOTE_URL is $GIT_REMOTE_URL"
+		say "         nothing has been changed; the server reports this at boot too."
+		say "         to repoint deliberately:"
+		say "             git -C $NOTES_DIR remote set-url origin $GIT_REMOTE_URL"
+	fi
+else
+	say "cloning $GIT_REMOTE_URL into $NOTES_DIR"
+	git clone "$GIT_REMOTE_URL" "$NOTES_DIR"
+
+	# A brand new GitHub repository has no commits, so the clone leaves HEAD on
+	# whatever this git calls the default branch. Pin it, or the first push
+	# creates a second branch alongside the one the laptop uses.
 	git -C "$NOTES_DIR" symbolic-ref HEAD "refs/heads/$NOTES_BRANCH"
 fi
 
-# The server passes a fallback identity of its own, but setting it here means
-# anything you run by hand in this directory is attributed the same way.
+# The server passes a fallback identity of its own; setting it here means
+# anything run by hand in this directory is attributed the same way.
 git -C "$NOTES_DIR" config user.name "$GIT_AUTHOR_NAME"
 git -C "$NOTES_DIR" config user.email "$GIT_AUTHOR_EMAIL"
 
-# Without this the first sync has no upstream to compare against, and status()
-# reports ahead/behind as zero regardless of the truth.
+# Without an upstream, status() reports ahead/behind as zero whatever the truth
+# is -- which makes a server that has stopped pushing look perfectly healthy.
 git -C "$NOTES_DIR" config "branch.$NOTES_BRANCH.remote" origin
 git -C "$NOTES_DIR" config "branch.$NOTES_BRANCH.merge" "refs/heads/$NOTES_BRANCH"
 
-say
+# --- check it actually works -------------------------------------------------
+
+say ""
+if git -C "$NOTES_DIR" ls-remote --quiet --exit-code origin HEAD >/dev/null 2>&1; then
+	say "remote reachable: $GIT_REMOTE_URL"
+elif git -C "$NOTES_DIR" ls-remote origin >/dev/null 2>&1; then
+	# Answered, but has no refs yet. Correct for a new repository, and the first
+	# sync will push into it.
+	say "remote reachable but empty: $GIT_REMOTE_URL"
+else
+	die "could not reach $GIT_REMOTE_URL -- check the deploy key has write access"
+fi
+
+say ""
 say "done."
-say
-say "  hub          $HUB_DIR"
+say ""
 say "  working copy $NOTES_DIR"
-say
+say "  remote       $GIT_REMOTE_URL"
+say ""
 say "clone it on your laptop with:"
-say
-say "    git clone ssh://$(whoami)@$(hostname)$HUB_DIR notes"
-say
+say ""
+say "    git clone $GIT_REMOTE_URL notes"
+say ""
 say "then start the stack:"
-say
+say ""
 say "    docker compose -f deploy/docker-compose.yml up -d --build"

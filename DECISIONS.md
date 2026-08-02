@@ -22,24 +22,57 @@ repo_. Its value is concentrated in machines you cannot or will not clone to —
 your phone, a locked-down work PC, a borrowed browser. On your own laptop, local
 nvim beats it on every axis.
 
-## 2. Git topology: bare hub, nobody pushes into a live checkout
+## 2. Git topology: a private GitHub repo is the remote
 
 ```
-~/notes.git     bare repo — the hub everything pushes to
-~/notes/        server working copy, where nvim and the API operate
-                fed by a post-receive hook on the hub
-your laptop     an ordinary clone of ~/notes.git
+github.com/you/notes   private repo — the remote everything pushes to
+~/notes/               server working copy, an ordinary clone
+                       polls every 60s to pull and push
+your laptop            an ordinary clone, from anywhere
 ```
 
-**Why:** with a laptop clone _and_ a server that auto-commits, there are two
-independent writers to one history. Git handles the naive version of this badly:
-you cannot push to a non-bare repo whose branch is checked out, and
-`receive.denyCurrentBranch=updateInstead` only works when the working tree is
-perfectly clean — which it will not be two seconds after nvim writes a file.
+**Changed.** This originally specified a bare hub at `~/notes.git` on the server,
+with the working copy fed by a `post-receive` hook. That is written down rather
+than quietly edited away, because the reasoning that produced it was sound and
+the thing that changed was a premise, not a mistake in the logic.
+
+The hub existed to solve exactly one problem: you cannot push into a repository
+whose branch is checked out, and `receive.denyCurrentBranch=updateInstead` needs
+a perfectly clean working tree, which this one will not have two seconds after
+nvim writes a file. A bare repo sidesteps that.
+
+But that problem only exists if the server is the thing being pushed to. Point
+both clones at GitHub instead and it never arises — so the fix **removes** a
+component rather than adding one. No `~/notes.git`, no hook, no bootstrap step
+for either.
+
+**Why:** offsite backup, which the hub never provided. Under the old topology
+the only copies were the VPS and whatever the laptop had last pulled, so losing
+the box lost everything not on the laptop — for a design whose whole pitch is
+that the data outlives the app (§1), that was the weakest part of it. Secondly,
+the laptop can now push from anywhere rather than only from the tailnet.
+
+**What it costs, honestly:**
+
+- **The server cannot be told about a push.** It is tailnet-only (§11), so no
+  webhook can reach it. Instant propagation via `post-receive` becomes polling,
+  and a note written on the laptop takes up to `SYNC_INTERVAL_MS` to appear.
+  That is a real regression and it is the price of the trade.
+- **A third party is now in the loop.** GitHub being down means no sync — though
+  local editing, history and search are all unaffected, because every clone is a
+  full repository.
+- **A credential now exists.** An SSH deploy key, scoped to that one repository,
+  mounted into the container and never baked into the image.
 
 **Rejected:** treating the server working copy as the remote (fragile, above);
-GitHub as the hub (works, adds a third party and round-trip latency, still worth
-adding later as a mirror for backup).
+keeping the hub _and_ adding GitHub as a mirror — two remotes to keep in sync
+and two ways for it to go wrong, to avoid a polling delay measured in seconds.
+
+**Consequence:** conflicts do not go away, they move. Two writers to one history
+is still the shape of the system, and `sync()` still returns them as typed
+outcomes rather than throwing. The care that used to live in the hook — never
+stash, never `reset --hard`, never leave a rebase half-done under a live editor
+— now lives in the pull path, which is where it belonged anyway.
 
 ## 3. Two clients over one directory
 

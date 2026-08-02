@@ -183,3 +183,65 @@ export function resumeUrl(base: string, params: ResumeParams): string {
 export function reconnectDelayMs(attempt: number): number {
   return Math.min(500 * 2 ** Math.max(0, attempt - 1), 15_000)
 }
+
+/**
+ * Where the session id survives a page load.
+ *
+ * Without this the resume machinery works for a dropped socket and not for a
+ * refresh, which is the wrong way round for the case that actually happens:
+ * `/term` lives in a work PC's tab for days, and browsers reload tabs on their
+ * own for memory pressure, updates and restored windows. The user comes back to
+ * a fresh shell while their real nvim is still running server-side, now
+ * unreachable, until the idle reaper kills it with their buffer inside.
+ *
+ * Deliberately *only* the id, never the byte offset. A reload destroys the
+ * terminal grid, so the useful request is "send me everything you still have"
+ * rather than "continue from byte N" -- the latter would paint the tail of a
+ * stream onto an empty screen and leave the user looking at a fragment. Not
+ * storing the offset also keeps this off the hot path: one write when a session
+ * is opened, rather than one per chunk of a redraw.
+ */
+export interface SessionMemory {
+  read(): string | null
+  write(sessionId: string): void
+  clear(): void
+}
+
+/**
+ * `sessionStorage`, keyed by endpoint.
+ *
+ * Per-tab rather than `localStorage`, which matches what a session is: two tabs
+ * are two terminals, and closing the tab is the one moment where forgetting is
+ * certainly right. Every access is guarded because storage is not always
+ * available -- Safari's private mode throws on write, and enterprise policy can
+ * disable it outright. A terminal that refuses to open because it could not
+ * remember a session id would be a far worse trade than one that forgets.
+ */
+export function sessionMemoryFor(url: string, storage?: Storage | null): SessionMemory {
+  const key = `vim-notes:terminal-session:${url}`
+  const store = storage === undefined ? safeStorage() : storage
+
+  if (store === null) return { read: () => null, write: () => {}, clear: () => {} }
+
+  return {
+    read: () => attempt(() => store.getItem(key)) ?? null,
+    write: (sessionId) => {
+      attempt(() => store.setItem(key, sessionId))
+    },
+    clear: () => {
+      attempt(() => store.removeItem(key))
+    },
+  }
+}
+
+function safeStorage(): Storage | null {
+  return attempt(() => globalThis.sessionStorage) ?? null
+}
+
+function attempt<T>(run: () => T): T | null {
+  try {
+    return run()
+  } catch {
+    return null
+  }
+}

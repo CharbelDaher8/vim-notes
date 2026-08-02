@@ -1,8 +1,9 @@
 /**
  * Git as the VersionControl port.
  *
- * The notes directory is an ordinary working copy whose remote is a bare hub
- * (DECISIONS §2), and a laptop clone pushes to that same hub. Two independent
+ * The notes directory is an ordinary working copy whose remote is a private
+ * GitHub repository (DECISIONS §2), and a laptop clone pushes to the same
+ * remote. Two independent
  * writers over one history means divergence and conflicts are a normal operating
  * condition here, not an exceptional one -- so `sync` reports them as data and
  * only genuine faults (git missing, a corrupt repo, a broken invariant) throw.
@@ -37,7 +38,7 @@ export interface GitIdentity {
 }
 
 export interface GitVersionControlOptions {
-  /** Remote that stands for the hub. */
+  /** Remote that stands for the GitHub repository. */
   remote?: string
   /** Used only when the repository resolves no `user.name` / `user.email`. */
   defaultAuthor?: GitIdentity
@@ -49,8 +50,8 @@ export interface GitVersionControlOptions {
   maxBuffer?: number
   /**
    * Extra environment for every git child process. The real use is transport
-   * credentials -- `GIT_SSH_COMMAND` with the deploy key for the hub -- which
-   * belongs in configuration rather than in this file.
+   * credentials -- `GIT_SSH_COMMAND` with the deploy key for the remote --
+   * which belongs in configuration rather than in this file.
    */
   env?: NodeJS.ProcessEnv
   /**
@@ -376,12 +377,12 @@ export class GitVersionControl implements VersionControl {
     if (pushed > 0) {
       // `--set-upstream` on every push is idempotent and keeps status()'s
       // ahead/behind meaningful even when the working copy was made with
-      // `git init` + `git remote add` rather than cloned from the hub.
+      // `git init` + `git remote add` rather than cloned from the remote.
       const push = await this.run(['push', '--set-upstream', this.remote, branch])
 
       if (push.code !== 0) {
         // Credentials are checked before refusal. A push that never reached the
-        // hub cannot have been rejected by it, and reporting 'rejected' for a
+        // remote cannot have been rejected by it, and reporting 'rejected' for a
         // bad key would send the caller into a retry loop that cannot succeed.
         const failure = classifyTransportFailure(push.stderr)
         if (failure.reason === 'auth') {
@@ -389,7 +390,7 @@ export class GitVersionControl implements VersionControl {
         }
 
         if (isPushRejected(push.stderr)) {
-          // The hub moved between our fetch and our push -- precisely the race
+          // The remote moved between our fetch and our push -- precisely the race
           // this topology invites. One retry usually settles it.
           if (mayRetry) return this.syncNow(false)
 
@@ -445,9 +446,9 @@ export class GitVersionControl implements VersionControl {
   }
 
   /**
-   * Fast-forward an unborn branch onto the hub. `git rebase` cannot resolve a
+   * Fast-forward an unborn branch onto the remote. `git rebase` cannot resolve a
    * HEAD with no commits behind it, and this is a real state: a working copy
-   * cloned while the hub was still empty, which the laptop has since pushed to.
+   * cloned while the remote was still empty, which the laptop has since pushed to.
    */
   private async adoptRemote(remoteRef: string): Promise<SyncOutcome | null> {
     const merge = await this.run(['merge', '--ff-only', remoteRef])

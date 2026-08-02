@@ -4,8 +4,10 @@ import {
   parseServerFrame,
   reconnectDelayMs,
   resumeUrl,
+  sessionMemoryFor,
   TERMINAL_WIRE,
   type ConnectionStatus,
+  type SessionMemory,
   type TerminalConnection,
   type TerminalExit,
   type TerminalReset,
@@ -53,11 +55,20 @@ const OPEN = 1
  * command executing against the wrong buffer; a dropped keystroke is visibly
  * dropped, which is the honest failure.
  */
+export interface WebSocketConnectionOptions {
+  /** Only replaced by tests. See `TerminalSocketLike`. */
+  createSocket?: (target: string) => TerminalSocketLike
+  /** Where the session id survives a page load. See `sessionMemoryFor`. */
+  memory?: SessionMemory
+}
+
 export function createWebSocketConnection(
   url: string,
-  createSocket: (target: string) => TerminalSocketLike = (target) =>
-    new WebSocket(target) as unknown as TerminalSocketLike,
+  options: WebSocketConnectionOptions = {},
 ): TerminalConnection {
+  const createSocket =
+    options.createSocket ?? ((target) => new WebSocket(target) as unknown as TerminalSocketLike)
+  const memory = options.memory ?? sessionMemoryFor(url)
   const byteListeners = new Set<(chunk: Uint8Array) => void>()
   const resetListeners = new Set<(reset: TerminalReset) => void>()
   const exitListeners = new Set<(exit: TerminalExit) => void>()
@@ -71,8 +82,20 @@ export function createWebSocketConnection(
   let lastSize: { cols: number; rows: number } | null = null
 
   /** What the server needs to hand this client a continuation, not a restart. */
-  let sessionId: string | null = null
+  let sessionId: string | null = memory.read()
   let nextOffset: number | null = null
+
+  /**
+   * The `after` this connection attempt actually asked for, captured when the
+   * URL was built. Null means "send me everything you have".
+   *
+   * It is what makes an honest reset notice possible. A reset frame on its own
+   * does not say whether output was lost: after a page load the client asks for
+   * a full replay on purpose, because its grid is empty, and the reset it gets
+   * back costs nothing. Only a reset in answer to a *continuation* means the
+   * ring could not reach back far enough and output is genuinely gone.
+   */
+  let requestedAfter: number | null = null
 
   const setStatus = (next: ConnectionStatus) => {
     if (status === next) return
@@ -89,12 +112,19 @@ export function createWebSocketConnection(
       case 'ready':
         sessionId = frame.sessionId
         nextOffset = frame.offset
+        // Written on every ready, not just the first: a resume that failed
+        // comes back with a *different* session, and remembering the dead one
+        // would make the next reload chase a pty that no longer exists.
+        memory.write(frame.sessionId)
 
-        // A fresh session has nothing behind it, so clearing is bookkeeping and
-        // there is nothing to report. A *resume* the server could not continue
-        // is different: output exists that this client will never be sent, and
-        // the ready frame does not carry a count of it.
-        if (frame.reset) emitReset(frame.resumed ? null : 0)
+        if (!frame.reset) return
+
+        // Clearing and complaining are separate. The grid always has to be
+        // thrown away here; whether anything was lost with it depends on what
+        // was asked for. Only a continuation that came back as a reset lost
+        // output -- and the ready frame carries no count of how much, so the
+        // notice says so rather than inventing a number.
+        emitReset(requestedAfter !== null && frame.resumed ? null : 0)
         return
 
       case 'reset':
@@ -106,6 +136,9 @@ export function createWebSocketConnection(
 
       case 'exit': {
         // nvim exited. That is not a dropped connection, so do not retry.
+        // Forgotten rather than remembered: a reload should open a new terminal
+        // here, not ask the server to resume a session that has ended.
+        memory.clear()
         setStatus('exited')
         const exit: TerminalExit = {
           code: frame.code,
@@ -129,9 +162,14 @@ export function createWebSocketConnection(
   const connect = () => {
     if (disposed) return
 
+    // Null on the first attempt of a page load even when a session is
+    // remembered, which is the whole point: the grid is gone, so ask for the
+    // ring rather than for a continuation onto a screen that no longer exists.
+    requestedAfter = nextOffset
+
     const target = resumeUrl(url, {
       session: sessionId,
-      after: nextOffset,
+      after: requestedAfter,
       cols: lastSize?.cols ?? null,
       rows: lastSize?.rows ?? null,
     })

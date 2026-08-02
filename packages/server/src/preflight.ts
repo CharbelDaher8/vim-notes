@@ -29,6 +29,7 @@ import * as fs from 'node:fs/promises'
 import * as nodePath from 'node:path'
 
 import type { Config } from './config'
+import { gitEnvironment } from './git-environment'
 
 /** How badly the server is affected by a binary being absent. */
 export type BinarySeverity = 'required' | 'optional'
@@ -69,8 +70,42 @@ export interface RootStatus {
   gitToplevel: string | null
 }
 
+export interface RemoteStatus {
+  /** Remote name that was looked up. */
+  name: string
+  /** Its URL, or null when no such remote is configured. */
+  url: string | null
+  /** Whether it answered. Null when there was nothing to ask. */
+  reachable: boolean | null
+  /** Why it did not answer. */
+  detail: string | null
+}
+
 export type PreflightIssue =
   | { kind: 'binary-missing'; command: string; provides: string; severity: BinarySeverity }
+  /**
+   * No remote, so nothing is being backed up anywhere.
+   *
+   * A warning rather than a refusal: notes and local history still work
+   * perfectly, and a server that will not boot without GitHub would be a worse
+   * trade than the one §2 actually made.
+   */
+  | { kind: 'remote-missing'; name: string }
+  /**
+   * Configured but not answering -- wrong key, no network, repository deleted.
+   * Also a warning: this is exactly the state a VPS is in while GitHub is down,
+   * and refusing to serve notes over it would be absurd.
+   */
+  | { kind: 'remote-unreachable'; name: string; url: string; detail: string }
+  /**
+   * `origin` points somewhere other than the configured URL.
+   *
+   * The setup invites this: bootstrap.sh only clones when the directory is
+   * absent, so editing GIT_REMOTE_URL afterwards changes nothing and notes keep
+   * going to the old remote. Nothing else would ever report it, because both
+   * halves are individually fine.
+   */
+  | { kind: 'remote-url-mismatch'; name: string; configured: string; actual: string }
   | { kind: 'root-missing'; root: string }
   | { kind: 'root-not-a-directory'; root: string }
   | { kind: 'root-not-writable'; root: string }
@@ -97,6 +132,7 @@ export interface PreflightReport {
   ok: boolean
   binaries: BinaryStatus[]
   root: RootStatus
+  remote: RemoteStatus
   issues: PreflightIssue[]
 }
 
@@ -121,7 +157,7 @@ export function requiredBinaries(config: Config): RequiredBinary[] {
       // without git the server still serves files, but every auto-commit fails
       // and the history that is supposed to outlive this app never exists.
       command: 'git',
-      provides: 'auto-commit, history, and sync with the hub',
+      provides: 'auto-commit, history, and sync with the remote',
       severity: 'required',
     },
     {
@@ -146,7 +182,12 @@ export function requiredBinaries(config: Config): RequiredBinary[] {
 
 // --- The decision, which is pure ---------------------------------------------
 
-export function evaluatePreflight(binaries: BinaryStatus[], root: RootStatus): PreflightReport {
+export function evaluatePreflight(
+  binaries: BinaryStatus[],
+  root: RootStatus,
+  remote: RemoteStatus,
+  configuredRemoteUrl?: string,
+): PreflightReport {
   const issues: PreflightIssue[] = []
 
   for (const binary of binaries) {
@@ -160,8 +201,57 @@ export function evaluatePreflight(binaries: BinaryStatus[], root: RootStatus): P
   }
 
   issues.push(...evaluateRoot(root))
+  issues.push(...evaluateRemote(remote, configuredRemoteUrl))
 
-  return { ok: !issues.some(isFatal), binaries, root, issues }
+  return { ok: !issues.some(isFatal), binaries, root, remote, issues }
+}
+
+function evaluateRemote(remote: RemoteStatus, configured?: string): PreflightIssue[] {
+  if (remote.url === null) return [{ kind: 'remote-missing', name: remote.name }]
+
+  const issues: PreflightIssue[] = []
+
+  if (configured !== undefined && configured !== '' && !sameRemote(configured, remote.url)) {
+    issues.push({
+      kind: 'remote-url-mismatch',
+      name: remote.name,
+      configured,
+      actual: remote.url,
+    })
+  }
+
+  if (remote.reachable === false) {
+    issues.push({
+      kind: 'remote-unreachable',
+      name: remote.name,
+      url: remote.url,
+      detail: remote.detail ?? 'no detail',
+    })
+  }
+
+  return issues
+}
+
+/**
+ * Whether two remote URLs mean the same repository.
+ *
+ * `git@github.com:me/notes.git` and `ssh://git@github.com/me/notes` are the same
+ * place written three ways, and reporting drift between them would be a false
+ * alarm that teaches people to ignore the real one.
+ */
+function sameRemote(a: string, b: string): boolean {
+  return normaliseRemote(a) === normaliseRemote(b)
+}
+
+function normaliseRemote(url: string): string {
+  return url
+    .trim()
+    .replace(/\.git$/, '')
+    .replace(/\/+$/, '')
+    .replace(/^ssh:\/\//, '')
+    .replace(/^git@([^:/]+)[:/]/, '$1/')
+    .replace(/^https:\/\//, '')
+    .toLowerCase()
 }
 
 function evaluateRoot(root: RootStatus): PreflightIssue[] {
@@ -191,11 +281,16 @@ function evaluateRoot(root: RootStatus): PreflightIssue[] {
   return issues
 }
 
+/** Remote problems degrade sync; they do not stop the server serving notes. */
+const DEGRADABLE = new Set(['remote-missing', 'remote-unreachable', 'remote-url-mismatch'])
+
 export function isFatal(issue: PreflightIssue): boolean {
   // Everything about the notes root is fatal: each of these makes writing or
   // committing fail for every request, forever, and none of them get better on
-  // their own. A missing optional binary is the only degradable case.
-  return issue.kind !== 'binary-missing' || issue.severity === 'required'
+  // their own. Missing optional binaries and remote trouble are the degradable
+  // cases -- a GitHub outage must not stop a box serving its own notes.
+  if (issue.kind === 'binary-missing') return issue.severity === 'required'
+  return !DEGRADABLE.has(issue.kind)
 }
 
 export function describePreflightIssue(issue: PreflightIssue): string {
@@ -218,6 +313,19 @@ export function describePreflightIssue(issue: PreflightIssue): string {
         'rather than being one itself, so auto-commit would either record nothing ' +
         `or commit into that repository; run: git init ${issue.root}`
       )
+    case 'remote-missing':
+      return (
+        `no '${issue.name}' remote is configured, so notes are committed locally ` +
+        'and never pushed anywhere; there is no offsite copy'
+      )
+    case 'remote-unreachable':
+      return `remote '${issue.name}' (${issue.url}) did not answer: ${issue.detail}`
+    case 'remote-url-mismatch':
+      return (
+        `remote '${issue.name}' points at ${issue.actual} but GIT_REMOTE_URL says ` +
+        `${issue.configured}; the working copy was cloned before that setting changed, ` +
+        'and notes are still going to the old one'
+      )
   }
 }
 
@@ -226,11 +334,13 @@ export function describePreflightIssue(issue: PreflightIssue): string {
 export interface PreflightProbes {
   probeBinary: (command: string) => Promise<ResolvedBinary | null>
   probeRoot: (root: string) => Promise<RootStatus>
+  probeRemote: (root: string, name: string, env: NodeJS.ProcessEnv) => Promise<RemoteStatus>
 }
 
 export const systemProbes: PreflightProbes = {
   probeBinary: resolveBinary,
   probeRoot: inspectRoot,
+  probeRemote: inspectRemote,
 }
 
 export async function preflight(
@@ -239,7 +349,7 @@ export async function preflight(
 ): Promise<PreflightReport> {
   const wanted = requiredBinaries(config)
 
-  const [binaries, root] = await Promise.all([
+  const [binaries, root, remote] = await Promise.all([
     Promise.all(
       wanted.map(async (binary) => ({
         ...binary,
@@ -247,9 +357,12 @@ export async function preflight(
       })),
     ),
     probes.probeRoot(config.NOTES_ROOT),
+    // The same environment the real sync uses, deploy key included. Checking
+    // reachability without it would report a healthy remote as unreachable.
+    probes.probeRemote(config.NOTES_ROOT, config.GIT_REMOTE, gitEnvironment(config)),
   ])
 
-  return evaluatePreflight(binaries, root)
+  return evaluatePreflight(binaries, root, remote, config.GIT_REMOTE_URL)
 }
 
 /**
@@ -376,6 +489,110 @@ function findGitToplevel(directory: string): Promise<string | null> {
   })
 }
 
+/**
+ * Asks the remote whether it is there.
+ *
+ * `ls-remote` rather than a plain `git remote get-url`, because a URL that is
+ * merely *configured* proves nothing: a deleted repository, an unauthorised key
+ * and a typo in the host all look identical until something actually connects.
+ * This is the one preflight check that touches the network, which is why it is
+ * bounded and why it can only ever produce a warning.
+ */
+export async function inspectRemote(
+  root: string,
+  name: string,
+  env: NodeJS.ProcessEnv = {},
+): Promise<RemoteStatus> {
+  const childEnv = {
+    ...process.env,
+    ...env,
+    LC_ALL: 'C',
+    // Already the default in GitVersionControl, and repeated here for the same
+    // reason: without it an unauthenticated fetch sits at a password prompt
+    // forever, and this one runs during boot.
+    GIT_TERMINAL_PROMPT: '0',
+  }
+
+  const url = await runGit(['remote', 'get-url', name], root, childEnv, 10_000)
+  if (url === null) return { name, url: null, reachable: null, detail: null }
+
+  const probe = await runGitResult(
+    ['ls-remote', '--quiet', '--exit-code', name, 'HEAD'],
+    root,
+    childEnv,
+    // Generous, but bounded: this delays the server starting, so it cannot be
+    // allowed to hang on a black-holed connection.
+    20_000,
+  )
+
+  if (probe.ok) return { name, url, reachable: true, detail: null }
+
+  // An empty repository answers, but has no HEAD to report -- that is a
+  // perfectly healthy remote on day one, not an unreachable one.
+  if (probe.code === 2) return { name, url, reachable: true, detail: null }
+
+  return { name, url, reachable: false, detail: summarizeStderr(probe.stderr) || 'no detail' }
+}
+
+function runGit(
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeout: number,
+): Promise<string | null> {
+  return runGitResult(args, cwd, env, timeout).then((result) =>
+    result.ok ? result.stdout.trim() || null : null,
+  )
+}
+
+interface GitProbe {
+  ok: boolean
+  code: number | null
+  stdout: string
+  stderr: string
+}
+
+function runGitResult(
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeout: number,
+): Promise<GitProbe> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      args,
+      { cwd, env, encoding: 'utf8', timeout, windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve({ ok: true, code: 0, stdout, stderr })
+          return
+        }
+        const code = (error as { code?: unknown }).code
+        resolve({
+          ok: false,
+          code: typeof code === 'number' ? code : null,
+          stdout,
+          stderr: stderr === '' ? error.message : stderr,
+        })
+      },
+    )
+  })
+}
+
+/** The line of git's stderr worth showing, rather than the first one. */
+function summarizeStderr(stderr: string): string {
+  const meaningful = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+
+  const diagnostic = meaningful.find((line) =>
+    /^(fatal:|error:|remote:|ssh:|Permission denied)/.test(line),
+  )
+  return (diagnostic ?? meaningful[0] ?? '').trim()
+}
+
 // --- Reporting ---------------------------------------------------------------
 
 export interface PreflightLogger {
@@ -401,6 +618,12 @@ export function logPreflight(report: PreflightReport, logger: PreflightLogger): 
 
   if (report.root.gitToplevel !== null && report.root.gitToplevel === report.root.realPath) {
     logger.info(`preflight: notes root ${report.root.root} is a git repository`)
+  }
+
+  // Where notes actually go, taken from git rather than from configuration --
+  // the two can disagree, and the log should record the one that is true.
+  if (report.remote.url !== null && report.remote.reachable === true) {
+    logger.info(`preflight: remote '${report.remote.name}' -> ${report.remote.url} (reachable)`)
   }
 
   for (const issue of report.issues) {

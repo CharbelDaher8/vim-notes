@@ -23,7 +23,9 @@ import {
 import { bindTerminal, describeResync, type TerminalLike } from './terminal-sink'
 import {
   reconnectDelayMs,
+  sessionMemoryFor,
   type ConnectionStatus,
+  type SessionMemory,
   type TerminalExit,
   type TerminalReset,
 } from './terminal-connection'
@@ -116,27 +118,48 @@ class FakeSocket implements TerminalSocketLike {
   }
 }
 
+/** Stands in for sessionStorage, and survives a "reload" the way it does. */
+class FakeMemory implements SessionMemory {
+  constructor(private value: string | null = null) {}
+
+  read(): string | null {
+    return this.value
+  }
+
+  write(sessionId: string): void {
+    this.value = sessionId
+  }
+
+  clear(): void {
+    this.value = null
+  }
+}
+
 interface Harness {
   terminal: FakeTerminal
   sockets: FakeSocket[]
   socket: FakeSocket
+  memory: FakeMemory
   resyncs: TerminalReset[]
   statuses: ConnectionStatus[]
   exits: TerminalExit[]
   dispose(): void
 }
 
-function harness(url = 'ws://host/term/ws'): Harness {
+function harness(url = 'ws://host/term/ws', memory = new FakeMemory()): Harness {
   const sockets: FakeSocket[] = []
   const terminal = new FakeTerminal()
   const resyncs: TerminalReset[] = []
   const statuses: ConnectionStatus[] = []
   const exits: TerminalExit[] = []
 
-  const connection = createWebSocketConnection(url, (target) => {
-    const socket = new FakeSocket(target)
-    sockets.push(socket)
-    return socket
+  const connection = createWebSocketConnection(url, {
+    createSocket: (target) => {
+      const socket = new FakeSocket(target)
+      sockets.push(socket)
+      return socket
+    },
+    memory,
   })
 
   const unbind = bindTerminal(connection, terminal, {
@@ -153,6 +176,7 @@ function harness(url = 'ws://host/term/ws'): Harness {
       if (latest === undefined) throw new Error('no socket was opened')
       return latest
     },
+    memory,
     resyncs,
     statuses,
     exits,
@@ -220,18 +244,12 @@ describe('a reset arriving mid-stream', () => {
     h.dispose()
   })
 
-  it('admits it cannot say how much was lost when a resume could not be continued', () => {
-    const h = harness()
-    h.socket.open()
-    h.socket.control({ ...READY, resumed: true, reset: true, offset: 8192 })
-
-    // A resume the ring could not serve knows output is missing but not how
-    // much, and the ready frame carries no count. Saying "0 bytes" would be a
-    // lie; saying nothing would hide a real loss.
-    expect(h.resyncs).toEqual([{ dropped: null }])
+  it('phrases an uncountable loss without inventing a number', () => {
+    // The `ready` frame carries no count, so a resume the ring could not serve
+    // knows output is missing but not how much. Saying "0 bytes" would be a
+    // lie; saying nothing would hide a real loss. The case that produces this
+    // is exercised in 'surviving a page load' below.
     expect(describeResync({ dropped: null })).toContain('Some output was dropped')
-
-    h.dispose()
   })
 })
 
@@ -281,6 +299,120 @@ describe('the stream a reset interrupts', () => {
     expect(h.terminal.contents).toBe('😀')
 
     h.dispose()
+  })
+})
+
+describe('surviving a page load', () => {
+  it('remembers the session and asks for it again', () => {
+    const memory = new FakeMemory()
+
+    const first = harness('ws://host/term/ws', memory)
+    first.socket.open()
+    first.socket.control(READY)
+    first.socket.output('work in progress')
+    first.dispose()
+
+    // A reload: everything in memory is gone, only storage survives. The
+    // browser does this on its own for memory pressure and updates, and
+    // without this the user comes back to a fresh shell while their real nvim
+    // keeps running server-side where they can no longer reach it.
+    const second = harness('ws://host/term/ws', memory)
+    const url = new URL(second.socket.url)
+
+    expect(url.searchParams.get('session')).toBe('s1')
+
+    // Deliberately no `after`. The grid did not survive the reload, so the
+    // useful request is the whole ring -- continuing from a byte offset would
+    // paint the tail of a stream onto an empty screen.
+    expect(url.searchParams.has('after')).toBe(false)
+
+    second.dispose()
+  })
+
+  it('does not cry wolf about the reset a reload asks for', () => {
+    const memory = new FakeMemory('s1')
+    const h = harness('ws://host/term/ws', memory)
+
+    h.socket.open()
+    h.socket.control({ ...READY, resumed: true, reset: true, offset: 4096 })
+    h.socket.output('the whole ring')
+
+    // The client asked for everything and got everything. The grid is cleared
+    // because that is what a full replay needs, but nothing was lost and
+    // saying otherwise is how a warning becomes noise people learn to skip.
+    expect(h.terminal.resets).toBe(1)
+    expect(h.terminal.contents).toBe('the whole ring')
+    expect(h.resyncs).toEqual([])
+
+    h.dispose()
+  })
+
+  it('still reports a resume the server could not continue', () => {
+    // Fake timers before the drop, because the drop is what schedules the
+    // retry -- arming them afterwards leaves the real timer holding it.
+    vi.useFakeTimers()
+
+    try {
+      const h = harness()
+      h.socket.open()
+      h.socket.control(READY)
+      h.socket.output('12345')
+      h.socket.drop()
+
+      vi.advanceTimersByTime(reconnectDelayMs(1))
+
+      // This one *did* ask to continue -- the socket dropped inside one page
+      // life, so the grid is still on screen and the offset is still known.
+      expect(new URL(h.socket.url).searchParams.get('after')).toBe('5')
+
+      h.socket.open()
+      h.socket.control({ ...READY, resumed: true, reset: true, offset: 9_000 })
+
+      // Asked for a continuation, got a reset: output exists that this client
+      // will never be sent, and nothing counted it.
+      expect(h.resyncs).toEqual([{ dropped: null }])
+
+      h.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('forgets a session that has exited', () => {
+    const memory = new FakeMemory()
+    const h = harness('ws://host/term/ws', memory)
+
+    h.socket.open()
+    h.socket.control(READY)
+    expect(memory.read()).toBe('s1')
+
+    // Reloading after `:q` should open a new terminal, not ask the server to
+    // resume something that has ended.
+    h.socket.control({ type: 'exit', code: 0 })
+    expect(memory.read()).toBeNull()
+
+    h.dispose()
+  })
+
+  it('keeps working when storage is unavailable', () => {
+    // Safari's private mode throws on write and enterprise policy can disable
+    // storage outright. A terminal that refuses to open because it could not
+    // remember an id would be a much worse trade than one that forgets.
+    const hostile: SessionMemory = {
+      read: () => {
+        throw new Error('SecurityError')
+      },
+      write: () => {
+        throw new Error('SecurityError')
+      },
+      clear: () => {
+        throw new Error('SecurityError')
+      },
+    }
+
+    expect(() => sessionMemoryFor('ws://host/term/ws', null).write('s1')).not.toThrow()
+    expect(sessionMemoryFor('ws://host/term/ws', null).read()).toBeNull()
+    expect(() => hostile.read()).toThrow()
   })
 })
 

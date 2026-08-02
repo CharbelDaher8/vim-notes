@@ -43,8 +43,52 @@ const schema = z.object({
   HOST: z.string().default(DEFAULT_HOST),
   PORT: z.coerce.number().int().min(1).max(65535).default(DEFAULT_PORT),
 
-  /** Remote name the auto-committer pushes to; the bare hub from §2. */
+  /** Remote name that sync pushes to; the private GitHub repo from §2. */
   GIT_REMOTE: z.string().default('origin'),
+
+  /**
+   * Where notes are pushed, as configured.
+   *
+   * The server does not need this to work -- it uses whatever `origin` the
+   * working copy already has. It is here so preflight can notice the two
+   * disagreeing, which is a trap the setup invites: bootstrap.sh only clones
+   * when the directory is absent, so editing this afterwards changes nothing
+   * and the notes keep going to the old remote.
+   */
+  GIT_REMOTE_URL: z.string().optional(),
+
+  /**
+   * SSH deploy key for the remote. Mounted, never baked into the image.
+   *
+   * When set, git runs with a GIT_SSH_COMMAND built from it; when unset, git
+   * uses whatever the ambient ssh configuration provides, which is what a
+   * developer on a laptop with their own key wants.
+   */
+  GIT_SSH_KEY_PATH: z.string().optional(),
+
+  /**
+   * Where ssh records host keys. Wanted because the container has no writable
+   * home directory by default, and ssh needs somewhere to put the host key it
+   * accepts on first connect.
+   */
+  GIT_KNOWN_HOSTS_PATH: z.string().optional(),
+
+  /**
+   * How often to pull and push. 0 disables polling entirely.
+   *
+   * Polling exists because the server is tailnet-only and a GitHub webhook
+   * cannot reach it (§2). The floor is not zero-or-anything: sync is a fetch
+   * plus a push against someone else's servers, and a value of a few hundred
+   * milliseconds would be abuse rather than configuration.
+   */
+  SYNC_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(60_000)
+    .refine((value) => value === 0 || value >= 5_000, {
+      message: 'must be 0 (disabled) or at least 5000ms',
+    }),
 
   /**
    * Fallback identity. A fresh VPS often has no global gitconfig, and commits
@@ -88,9 +132,15 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
 
-export type Config = Omit<z.infer<typeof schema>, 'NOTES_ROOT'> & {
+export type Config = Omit<
+  z.infer<typeof schema>,
+  'NOTES_ROOT' | 'GIT_SSH_KEY_PATH' | 'GIT_KNOWN_HOSTS_PATH'
+> & {
   /** Always absolute and tilde-expanded. */
   NOTES_ROOT: string
+  /** Absolute and tilde-expanded when set. */
+  GIT_SSH_KEY_PATH: string | undefined
+  GIT_KNOWN_HOSTS_PATH: string | undefined
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -103,7 +153,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`invalid server configuration:\n${detail}`)
   }
 
-  return { ...parsed.data, NOTES_ROOT: resolveHome(parsed.data.NOTES_ROOT) }
+  return {
+    ...parsed.data,
+    NOTES_ROOT: resolveHome(parsed.data.NOTES_ROOT),
+    // Both are paths handed to ssh, which does no tilde expansion of its own
+    // when they arrive through GIT_SSH_COMMAND rather than a shell.
+    GIT_SSH_KEY_PATH: optionalPath(parsed.data.GIT_SSH_KEY_PATH),
+    GIT_KNOWN_HOSTS_PATH: optionalPath(parsed.data.GIT_KNOWN_HOSTS_PATH),
+  }
 }
 
 /**
@@ -111,6 +168,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
  * environment rather than a command line, and an unexpanded tilde would create
  * a literal `./~` directory rather than failing loudly.
  */
+function optionalPath(input: string | undefined): string | undefined {
+  return input === undefined || input === '' ? undefined : resolveHome(input)
+}
+
 function resolveHome(input: string): string {
   if (input === '~') return homedir()
   if (input.startsWith('~/')) return path.join(homedir(), input.slice(2))

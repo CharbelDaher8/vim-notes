@@ -18,6 +18,7 @@ import {
   resolveBinary,
   type BinaryStatus,
   type PreflightProbes,
+  type RemoteStatus,
   type RootStatus,
 } from './preflight'
 
@@ -62,6 +63,17 @@ function healthyRoot(overrides: Partial<RootStatus> = {}): RootStatus {
   }
 }
 
+/** A remote that is configured and answering. */
+function healthyRemote(overrides: Partial<RemoteStatus> = {}): RemoteStatus {
+  return {
+    name: 'origin',
+    url: 'git@github.com:me/notes.git',
+    reachable: true,
+    detail: null,
+    ...overrides,
+  }
+}
+
 function binary(command: string, severity: 'required' | 'optional', found: boolean): BinaryStatus {
   return {
     command,
@@ -79,7 +91,7 @@ const allPresent = [
 
 describe('evaluatePreflight', () => {
   it('passes when everything is present and the root is its own repository', () => {
-    const report = evaluatePreflight(allPresent, healthyRoot())
+    const report = evaluatePreflight(allPresent, healthyRoot(), healthyRemote())
     expect(report.ok).toBe(true)
     expect(report.issues).toEqual([])
   })
@@ -90,6 +102,7 @@ describe('evaluatePreflight', () => {
     const report = evaluatePreflight(
       [binary('git', 'required', false), binary('rg', 'optional', true)],
       healthyRoot(),
+      healthyRemote(),
     )
 
     expect(report.ok).toBe(false)
@@ -106,6 +119,7 @@ describe('evaluatePreflight', () => {
         binary('nvim', 'optional', false),
       ],
       healthyRoot(),
+      healthyRemote(),
     )
 
     expect(report.ok).toBe(true)
@@ -123,7 +137,7 @@ describe('evaluatePreflight', () => {
     ['root-not-a-repository', healthyRoot({ gitToplevel: null })],
     ['root-inside-another-repository', healthyRoot({ gitToplevel: '/somewhere/else' })],
   ])('treats %s as fatal', (kind, root) => {
-    const report = evaluatePreflight(allPresent, root)
+    const report = evaluatePreflight(allPresent, root, healthyRemote())
 
     expect(report.ok).toBe(false)
     expect(report.issues.map((issue) => issue.kind)).toContain(kind)
@@ -139,6 +153,7 @@ describe('evaluatePreflight', () => {
         binary('nvim', 'optional', false),
       ],
       healthyRoot({ writable: false, gitToplevel: null }),
+      healthyRemote(),
     )
 
     expect(report.issues.map((issue) => issue.kind).sort()).toEqual([
@@ -162,6 +177,7 @@ describe('evaluatePreflight', () => {
         writable: false,
         gitToplevel: null,
       }),
+      healthyRemote(),
     )
 
     expect(report.issues).toEqual([{ kind: 'root-missing', root: '/notes' }])
@@ -178,6 +194,7 @@ describe('evaluatePreflight', () => {
         realPath: '/private/var/data/notes',
         gitToplevel: '/private/var/data',
       }),
+      healthyRemote(),
     )
 
     expect(report.issues).toEqual([
@@ -198,6 +215,76 @@ describe('evaluatePreflight', () => {
 
     expect(message).toContain('/work/repo')
     expect(message).toContain('git init /work/repo/notes-dev')
+  })
+})
+
+describe('the remote', () => {
+  it('warns when nothing is configured, without refusing to start', () => {
+    // No remote means no offsite copy, which matters -- but notes and local
+    // history still work, and a box that will not boot without GitHub would
+    // undo the trade §2 made.
+    const report = evaluatePreflight(
+      allPresent,
+      healthyRoot(),
+      healthyRemote({ url: null, reachable: null }),
+    )
+
+    expect(report.ok).toBe(true)
+    expect(report.issues).toEqual([{ kind: 'remote-missing', name: 'origin' }])
+  })
+
+  it('warns when the remote does not answer', () => {
+    // This is the state of every box while GitHub is down. Refusing to serve
+    // notes over it would be absurd.
+    const report = evaluatePreflight(
+      allPresent,
+      healthyRoot(),
+      healthyRemote({ reachable: false, detail: 'Permission denied (publickey).' }),
+    )
+
+    expect(report.ok).toBe(true)
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        kind: 'remote-unreachable',
+        detail: 'Permission denied (publickey).',
+      }),
+    )
+  })
+
+  it('notices origin disagreeing with the configured URL', () => {
+    // bootstrap.sh only clones when the directory is absent, so editing
+    // GIT_REMOTE_URL later silently does nothing.
+    const report = evaluatePreflight(
+      allPresent,
+      healthyRoot(),
+      healthyRemote({ url: 'git@github.com:me/old-notes.git' }),
+      'git@github.com:me/new-notes.git',
+    )
+
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        kind: 'remote-url-mismatch',
+        actual: 'git@github.com:me/old-notes.git',
+      }),
+    )
+  })
+
+  it.each([
+    ['git@github.com:me/notes.git', 'ssh://git@github.com/me/notes'],
+    ['git@github.com:me/notes.git', 'git@github.com:me/notes'],
+    ['https://github.com/me/notes.git', 'https://github.com/me/notes/'],
+    ['git@github.com:Me/Notes.git', 'git@github.com:me/notes.git'],
+  ])('does not cry drift over %s vs %s', (configured, actual) => {
+    // The same repository written several ways. A false alarm here teaches
+    // people to ignore the real one.
+    const report = evaluatePreflight(
+      allPresent,
+      healthyRoot(),
+      healthyRemote({ url: actual }),
+      configured,
+    )
+
+    expect(report.issues).toEqual([])
   })
 })
 
@@ -230,6 +317,7 @@ describe('preflight', () => {
         return { path: `/fake/${command}`, version: null }
       },
       probeRoot: async (root) => healthyRoot({ root, realPath: root, gitToplevel: root }),
+      probeRemote: async (_root, name) => healthyRemote({ name }),
     }
 
     const report = await preflight(
@@ -350,7 +438,7 @@ describe('inspectRoot', () => {
     expect(status.gitToplevel).toBe(outer)
     expect(status.gitToplevel).not.toBe(status.realPath)
 
-    const report = evaluatePreflight(allPresent, status)
+    const report = evaluatePreflight(allPresent, status, healthyRemote())
     expect(report.ok).toBe(false)
     expect(report.issues).toContainEqual(
       expect.objectContaining({ kind: 'root-inside-another-repository', toplevel: outer }),
@@ -382,7 +470,7 @@ describe('logPreflight', () => {
       error: (message: string) => lines.push(`error ${message}`),
     }
 
-    logPreflight(evaluatePreflight(allPresent, healthyRoot()), logger)
+    logPreflight(evaluatePreflight(allPresent, healthyRoot(), healthyRemote()), logger)
 
     expect(lines.some((line) => line.includes('/usr/bin/nvim') && line.includes('nvim 1.0'))).toBe(
       true,
@@ -402,6 +490,7 @@ describe('logPreflight', () => {
       evaluatePreflight(
         [binary('git', 'required', false), binary('rg', 'optional', false)],
         healthyRoot(),
+        healthyRemote(),
       ),
       logger,
     )

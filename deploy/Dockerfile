@@ -59,11 +59,13 @@ FROM node:22-slim AS server
 # checks all three at boot and says which one is missing.
 #
 # git     -- GitVersionControl shells out to it for every commit and sync.
+# openssh -- git needs it to reach GitHub over ssh (DECISIONS §2). Installing
+#            git alone gets you a push that fails with "unable to find ssh".
 # ripgrep -- what the Search adapter runs (the binary is `rg`).
 # neovim  -- not a development convenience. DECISIONS §3: real nvim in a pty is
 #            the product, and /term is worthless without it.
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends git ripgrep ca-certificates curl \
+	&& apt-get install -y --no-install-recommends git openssh-client ripgrep ca-certificates curl \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Debian ships an nvim old enough that a modern init.lua will not load, which

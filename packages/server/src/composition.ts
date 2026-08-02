@@ -8,8 +8,10 @@ import { MemoryNoteIndex } from './adapters/memory-note-index'
 import { NodePtyTerminalHost } from './adapters/node-pty-terminal-host'
 import { RipgrepSearch } from './adapters/ripgrep-search'
 import { WriteJournal } from './adapters/write-journal'
+import { SyncScheduler } from './adapters/sync-scheduler'
 import type { AppContext } from './api/trpc'
 import type { Config } from './config'
+import { gitEnvironment } from './git-environment'
 
 /**
  * The composition root: the one place that knows which implementation backs
@@ -43,6 +45,9 @@ export async function createApplication(config: Config): Promise<Application> {
   const vcs = new GitVersionControl(config.NOTES_ROOT, {
     remote: config.GIT_REMOTE,
     defaultAuthor: { name: config.GIT_AUTHOR_NAME, email: config.GIT_AUTHOR_EMAIL },
+    // Carries the deploy key. Built in one place so preflight can test the
+    // remote with exactly the credentials the real sync will use.
+    env: gitEnvironment(config),
   })
 
   const autoCommitter = new AutoCommitter(vcs, {
@@ -89,6 +94,22 @@ export async function createApplication(config: Config): Promise<Application> {
     autoCommitter.recordSave(event.path as NotePath)
   })
 
+  /**
+   * Polling replaces the hub's post-receive hook (DECISIONS §2): the server is
+   * tailnet-only, so GitHub cannot call us and we have to ask.
+   *
+   * `beforeSync` is the important wiring here. A sync that runs while a save is
+   * still pending finds a dirty tree and refuses to rebase -- reported honestly
+   * as `dirty`, but a pull that never lands is a pull that never lands.
+   * Flushing first turns the pending save into a commit the rebase can move.
+   */
+  const syncScheduler = new SyncScheduler(vcs, {
+    intervalMs: config.SYNC_INTERVAL_MS,
+    beforeSync: () => autoCommitter.flush(),
+    onError: onError('sync'),
+  })
+  syncScheduler.start()
+
   return {
     context: { notes, vcs, search, watcher, terminals, index },
     terminals,
@@ -99,6 +120,14 @@ export async function createApplication(config: Config): Promise<Application> {
       // last save, which is exactly the moment it matters most.
       unsubscribeAutoCommit()
       index.close()
+
+      // Before the flush below, so a sync cannot start while the final commit
+      // is being made. No final push is attempted on the way out: the commit is
+      // already durable on disk, the next boot syncs immediately, and the only
+      // case that would lose is a box that never comes back -- which is also
+      // the case where nothing graceful runs at all.
+      await syncScheduler.stop()
+
       await watcher.close()
       await autoCommitter.stop()
       await terminals.killAll()
