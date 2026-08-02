@@ -14,6 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fastify/static": "^10.1.2",
     "@fastify/websocket": "^11.3.0",
     "@trpc/server": "catalog:",
     "@vim-notes/core": "workspace:*",
