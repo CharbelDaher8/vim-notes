@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 
-import { usePlatform } from '../platform'
+import { currentServerOrigin, usePlatform } from '../platform'
 import { useThemeSync } from '../shared/theme'
 import { useWorkspaceStore } from '../shared/workspace-store'
 import { GraphRoute } from './graph-route'
 import { NotesWorkspace } from './notes-workspace'
+import { ServerSettings } from './server-settings'
 import { TerminalRoute } from './terminal-route'
 import { useRoute } from './use-route'
 
@@ -25,7 +26,15 @@ export function App() {
   useThemeSync()
   useWindowTitle()
 
-  switch (useRoute()) {
+  const route = useRoute()
+  const needsServer = useNeedsServer()
+
+  // Nothing works until the desktop build knows where the server is: every
+  // route would render an error, and none of them would say why. So this comes
+  // before routing rather than inside it.
+  if (needsServer) return <ServerSetup />
+
+  switch (route) {
     case 'terminal':
       return <TerminalRoute />
     case 'graph':
@@ -33,6 +42,25 @@ export function App() {
     default:
       return <NotesWorkspace />
   }
+}
+
+/** True only in the desktop build, and only until an address is set. */
+function useNeedsServer(): boolean {
+  const platform = usePlatform()
+  return platform.host.kind === 'tauri' && !currentServerOrigin().ok
+}
+
+function ServerSetup() {
+  return (
+    <main className="server-setup">
+      <h1 className="server-setup__title">Connect to your notes</h1>
+      <p className="server-setup__body">
+        This is a client for a server you run. Enter the address it is reachable at — the tailnet
+        address of the machine hosting it.
+      </p>
+      <ServerSettings variant="panel" />
+    </main>
+  )
 }
 
 function useWindowTitle(): void {

@@ -6,6 +6,7 @@ import { useMediaQuery } from '../shared/use-media-query'
 import { Keyboard, Menu, Moon, Sun } from '../shared/ui/icons'
 import { useWorkspaceStore } from '../shared/workspace-store'
 import { DevTools } from './dev-tools'
+import { ServerSettings } from './server-settings'
 
 export function AppHeader() {
   // Called here because this is where the toggle lives; the hook keeps the
@@ -44,6 +45,9 @@ export function AppHeader() {
       <TerminalLink />
 
       <DevTools />
+
+      {/* Renders nothing in the browser build -- see ServerSettings. */}
+      <ServerSettings />
 
       <button
         type="button"

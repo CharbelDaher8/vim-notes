@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback } from 'react'
 
 import { createWebSocketConnection } from '../features/terminal/websocket-connection'
+import { currentServerOrigin, socketUrl } from '../platform'
 
 /**
  * The lazy boundary that keeps xterm.js off the phone.
@@ -22,7 +23,22 @@ const TerminalPane = lazy(() =>
 )
 
 export function TerminalRoute() {
-  const connect = useCallback(() => createWebSocketConnection(terminalUrl()), [])
+  const server = currentServerOrigin()
+
+  const connect = useCallback(() => {
+    if (!server.ok) throw new Error('no server configured')
+    return createWebSocketConnection(socketUrl(server.origin, TERMINAL_SOCKET_PATH))
+  }, [server])
+
+  // The desktop build before anyone has said where the server is. Saying so
+  // beats letting the socket fail against an address that cannot exist.
+  if (!server.ok) {
+    return (
+      <p className="route-loading">
+        No server configured. Set the server address in settings to use the terminal.
+      </p>
+    )
+  }
 
   return (
     <Suspense fallback={<p className="route-loading">Loading terminal…</p>}>
@@ -43,13 +59,11 @@ export function TerminalRoute() {
  */
 const TERMINAL_SOCKET_PATH = '/term/ws'
 
-/**
- * Same origin as the page. The server binds to the tailnet and is never public
- * (DECISIONS.md §11), so there is no cross-origin case to configure -- and a
- * configurable socket URL on a shell-over-WebSocket is a footgun worth not
- * building.
+/*
+ * This used to derive the socket from `window.location`, on the reasoning that
+ * the page and the server are always the same origin. True in a browser, and
+ * false in the desktop build: its pages load from the bundle over `tauri://`
+ * (`http://tauri.localhost` on Windows), so that produced
+ * `ws://tauri.localhost/term/ws` -- an address inside the app itself, which
+ * nothing serves. See platform/server-origin.ts.
  */
-function terminalUrl(): string {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}${TERMINAL_SOCKET_PATH}`
-}

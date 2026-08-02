@@ -260,3 +260,100 @@
   height: var(--viewport-height, 100dvh);
   overflow: hidden;
 }
+
+/* --- Server address (desktop build only) ----------------------------------
+ *
+ * Only ever rendered when the host is Tauri: the browser build is served by the
+ * same proxy that fronts the API, so there is nothing here it could usefully be
+ * set to. See app/server-settings.tsx.
+ */
+
+.server-setup {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+.server-setup__title {
+  font-size: 1.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.server-setup__body {
+  color: var(--text-muted);
+  margin: 0 0 1.5rem;
+  line-height: 1.5;
+}
+
+.server-settings {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.server-settings__label {
+  grid-column: 1 / -1;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.server-settings__input {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  min-width: 0;
+}
+
+.server-settings__input[aria-invalid='true'] {
+  border-color: var(--danger, #d24);
+}
+
+.server-settings__save {
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.server-settings__status {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.server-settings__status--error {
+  color: var(--danger, #d24);
+}
+
+/* Collapsed in the header, where it is a rarely-touched setting rather than
+ * the only thing on screen. */
+.server-settings__disclosure {
+  position: relative;
+}
+
+.server-settings__summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  list-style: none;
+}
+
+.server-settings__disclosure[open] .server-settings {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 20;
+  width: 22rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.25));
+}
