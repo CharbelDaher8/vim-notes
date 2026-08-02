@@ -589,11 +589,21 @@ describe('a settled journal graph', () => {
   }
 
   /**
-   * The rectangles the browser will actually draw, not the shape the simulation
-   * reasons about -- those differ at the corners, and it is the drawn ones that
-   * either read or do not.
+   * Pairs of labels that read as one label.
+   *
+   * Deliberately not "pairs that overlap". Overlap was the first thing measured
+   * here and it was the wrong thing: two words with a sliver of white space
+   * between them do not overlap by any arithmetic and still read as a single
+   * word -- `markdown` next to `inbox` is `markdownbox`. That was caught in a
+   * browser, by eye, after this file reported the picture clean.
+   *
+   * So the test is a typographic one. If the rows overlap vertically and there
+   * is less than an em of white between them, they run together, and a reader
+   * cannot tell where one name ends.
    */
-  const overlappingLabels = (scene: Scene): string[] => {
+  const READS_AS_ONE_WORD = LABEL_FONT_SIZE
+
+  const labelsRunningTogether = (scene: Scene): string[] => {
     const layout = createLayout({
       nodes: scene.nodes,
       edges: scene.edges.map((edge) => ({
@@ -620,35 +630,35 @@ describe('a settled journal graph', () => {
         }
       })
 
-    const overlaps: string[] = []
+    const collisions: string[] = []
     for (const [i, a] of boxes.entries()) {
       for (const b of boxes.slice(i + 1)) {
-        if (
-          Math.abs(a.x - b.x) < a.halfWidth + b.halfWidth &&
-          Math.abs(a.y - b.y) < a.halfHeight + b.halfHeight
-        ) {
-          overlaps.push(`${a.label} over ${b.label}`)
+        const sameRow = Math.abs(a.y - b.y) < a.halfHeight + b.halfHeight
+        const whiteSpace = Math.abs(a.x - b.x) - (a.halfWidth + b.halfWidth)
+
+        if (sameRow && whiteSpace < READS_AS_ONE_WORD) {
+          collisions.push(`${a.label}${b.label} (${whiteSpace.toFixed(1)} apart)`)
         }
       }
     }
 
-    return overlaps
+    return collisions
   }
 
-  it('leaves no two labels sitting on top of each other', () => {
-    expect(overlappingLabels(journal())).toEqual([])
+  it('leaves no two labels reading as one', () => {
+    expect(labelsRunningTogether(journal())).toEqual([])
   })
 
-  it('keeps overlaps rare at a month, where a small graph is too easy to be a test', () => {
-    // Sixteen nodes clear with any one of the four measures in place, so that
-    // case cannot tell which is carrying the weight. A month cannot be cleared
-    // by any single one: with the separation force removed this goes from two
-    // overlaps to ten, which is what gives this assertion teeth.
+  it('keeps labels legible at a month, where a small graph is too easy to be a test', () => {
+    // Sixteen nodes come out clean with any one of the four measures in place,
+    // so that case cannot tell which is carrying the weight. A month cannot be
+    // cleared by any single one: with the separation force removed this goes
+    // from one pair to twenty-odd, which is what gives the assertion teeth.
     const scene = journal(30)
     const labels = scene.nodes.filter((entry) => entry.short !== '').length
 
     expect(labels).toBeGreaterThan(100)
-    expect(overlappingLabels(scene).length).toBeLessThan(labels * 0.05)
+    expect(labelsRunningTogether(scene).length).toBeLessThan(labels * 0.05)
   })
 
   it('keeps the widest label a small fraction of the whole picture', () => {

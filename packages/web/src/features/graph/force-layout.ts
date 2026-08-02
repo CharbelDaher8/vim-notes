@@ -566,7 +566,7 @@ function exactRepulsion(layout: Layout): void {
         // Coincident nodes have no direction to separate along. Deriving one
         // from the two ids rather than from `Math.random` is what keeps the
         // whole layout reproducible, which is what makes it testable.
-        const angle = ((hash(`${a.id} ${b.id}`) % 3600) / 3600) * TAU
+        const angle = ((hash(`${a.id}\u0000${b.id}`) % 3600) / 3600) * TAU
         dx = Math.cos(angle) * 0.01
         dy = Math.sin(angle) * 0.01
         d2 = dx * dx + dy * dy

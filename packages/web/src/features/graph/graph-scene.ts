@@ -140,8 +140,25 @@ export const LABEL_GAP = 13
  */
 export const MIN_LABEL_PIXELS = 7
 const LABEL_HEIGHT = 11
-/** Breathing room between neighbouring labels, so they touch rather than kiss. */
-const LABEL_MARGIN = 5
+
+/**
+ * Clear space a label wants around it, in multiples of its own size.
+ *
+ * Not "so the boxes do not overlap" -- so the words do not read as one word.
+ * Two labels separated by less than a word space run together at a glance:
+ * `markdown` beside `inbox` is read as `markdownbox`, and no measurement of
+ * overlap catches that, because there is no overlap. Asking for better than an
+ * em on each side puts a clear two ems between neighbours.
+ *
+ * Sideways only. Labels are wide and short, so horizontal neighbours are the
+ * ones that run together; vertically they are already separated by their own
+ * line height and a generous gap there would just make the picture tall.
+ */
+const LABEL_MARGIN_X = LABEL_FONT_SIZE * 1.2
+const LABEL_MARGIN_Y = LABEL_FONT_SIZE * 0.4
+
+/** Nodes with nothing written under them only need to not touch. */
+const NODE_MARGIN = 3
 
 /**
  * Longest label drawn.
@@ -268,11 +285,15 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
       missing,
       ambiguous,
       radius,
-      spreadX: Math.max(radius, labelWidth / 2) + LABEL_MARGIN,
+      spreadX:
+        short === '' ? radius + NODE_MARGIN : Math.max(radius, labelWidth / 2) + LABEL_MARGIN_X,
       // The label hangs below the node, so the real box is lopsided. Treating
       // it as symmetric about the node costs a little vertical room and saves
       // the simulation from caring which way up a node is.
-      spreadY: radius + (short === '' ? 0 : LABEL_GAP + LABEL_HEIGHT / 2) + LABEL_MARGIN,
+      spreadY:
+        short === ''
+          ? radius + NODE_MARGIN
+          : radius + LABEL_GAP + LABEL_HEIGHT / 2 + LABEL_MARGIN_Y,
       degree: links,
       description: describe({
         kind: node.kind,
