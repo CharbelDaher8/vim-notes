@@ -1,16 +1,27 @@
 /**
- * These drive real ptys. Mocking node-pty would leave every property worth
- * testing here untested -- chunk boundaries are decided by the kernel's tty
- * buffer, SIGWINCH is delivered by the OS, and a mock's idea of when a child
- * dies is not the one that matters. `sh` and `cat` stand in for nvim so the
- * suite stays fast and deterministic; nothing under test cares which program is
- * on the other end of the fd.
+ * Two suites, for two kinds of question.
+ *
+ * `NodePtyTerminalHost` drives real ptys. Mocking node-pty would leave every
+ * property worth testing there untested -- chunk boundaries are decided by the
+ * kernel's tty buffer, SIGWINCH is delivered by the OS, and a mock's idea of
+ * when a child dies is not the one that matters. `sh` and `cat` stand in for
+ * nvim so the suite stays fast; nothing under test cares which program is on the
+ * other end of the fd.
+ *
+ * `exit and the drain that follows it` drives a fake pty, for the opposite
+ * reason. The property it covers is an *ordering* -- what happens to output that
+ * lands after the child has been reaped -- and a real kernel will not order two
+ * events on request. Left to a real pty this is a race that resolves one way on
+ * a quiet laptop and the other way on a loaded CI runner, which is the same as
+ * saying it is untested everywhere it passes. A fake pty turns the ordering into
+ * something a test states outright.
  */
 import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import * as nodePath from 'node:path'
 
+import type { IDisposable, IPty } from 'node-pty'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -74,6 +85,45 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<voi
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Says how `got` differs from `expected` in terms that name a cause.
+ *
+ * `equals` answers a yes/no question, and for a byte stream that has been
+ * through a kernel that is not the one running the assertion, the interesting
+ * part is *which* bytes and *where*. A truncated-but-otherwise-exact stream and
+ * a stream with an interior hole fail the same assertion and are not the same
+ * bug.
+ */
+function describeAgainst(got: Buffer, expected: Buffer): string {
+  if (got.equals(expected)) return 'identical'
+
+  const shared = Math.min(got.length, expected.length)
+  let diverged = shared
+  for (let i = 0; i < shared; i++) {
+    if (got[i] !== expected[i]) {
+      diverged = i
+      break
+    }
+  }
+
+  if (diverged === shared) {
+    const missing = expected.length - got.length
+    return missing > 0
+      ? `truncated: an exact prefix, ${missing} of ${expected.length} trailing bytes never arrived`
+      : `overlong: an exact prefix followed by ${-missing} unexpected trailing bytes`
+  }
+
+  return (
+    `diverges at byte ${diverged} of ${expected.length} ` +
+    `(got ${hexAround(got, diverged)}, expected ${hexAround(expected, diverged)}); ` +
+    `lengths ${got.length} and ${expected.length}`
+  )
+}
+
+function hexAround(buffer: Buffer, at: number): string {
+  return buffer.subarray(at, at + 8).toString('hex')
 }
 
 /**
@@ -150,7 +200,16 @@ describe('NodePtyTerminalHost', () => {
     await session.waitForExit()
 
     const expected = Buffer.from(content, 'utf8')
-    expect(output.bytes().equals(expected)).toBe(true)
+    const got = output.bytes()
+
+    // Asserted through a description first, and only then as the plain byte
+    // comparison. This is the one test here whose failures have historically
+    // shown up on a machine the person reading them cannot touch, and `expected
+    // false to be true` is not a bug report. A short but otherwise perfect
+    // prefix means the tail went missing as the child died; anything else means
+    // bytes were altered or dropped mid-stream, which has a different cause.
+    expect(describeAgainst(got, expected)).toBe('identical')
+    expect(got.equals(expected)).toBe(true)
     expect(output.text()).toBe(content)
     expect(output.text()).not.toContain('�')
   })
@@ -369,5 +428,261 @@ describe('NodePtyTerminalHost', () => {
 
     const exit = await session.waitForExit()
     expect(exit.code).toBe(0)
+  })
+})
+
+/**
+ * A pty whose two interesting events happen when the test says so.
+ *
+ * Everything here exists to be driven: `emitData` and `emitExit` are the levers,
+ * and `paused` and `killedWith` are what the session's side of the bargain is
+ * checked against. It implements `IPty` in full because the seam takes the real
+ * type -- an interface trimmed to what the adapter happens to call today would
+ * stop failing the moment the adapter started calling something else.
+ */
+class FakePty implements IPty {
+  readonly pid = 4242
+  cols = 80
+  rows = 24
+  readonly process = 'fake'
+  handleFlowControl = false
+
+  paused = false
+  killedWith: string | undefined
+  readonly writes: Buffer[] = []
+  readonly resizes: Array<{ cols: number; rows: number }> = []
+
+  private readonly dataListeners = new Set<(chunk: string) => void>()
+  private readonly exitListeners = new Set<(e: { exitCode: number; signal?: number }) => void>()
+
+  readonly onData = (listener: (chunk: string) => void): IDisposable => {
+    this.dataListeners.add(listener)
+    return { dispose: () => this.dataListeners.delete(listener) }
+  }
+
+  readonly onExit = (listener: (e: { exitCode: number; signal?: number }) => void): IDisposable => {
+    this.exitListeners.add(listener)
+    return { dispose: () => this.exitListeners.delete(listener) }
+  }
+
+  /**
+   * Buffers, not strings, because that is what node-pty delivers under
+   * `encoding: null` and what the adapter's cast asserts. The signature is
+   * `IEvent<string>` only because node-pty's typings do not model the option.
+   */
+  emitData(chunk: Buffer): void {
+    for (const listener of this.dataListeners) listener(chunk as unknown as string)
+  }
+
+  emitExit(exitCode = 0, signal?: number): void {
+    for (const listener of this.exitListeners) listener({ exitCode, signal })
+  }
+
+  resize(cols: number, rows: number): void {
+    this.cols = cols
+    this.rows = rows
+    this.resizes.push({ cols, rows })
+  }
+
+  clear(): void {}
+
+  write(data: string | Buffer): void {
+    this.writes.push(typeof data === 'string' ? Buffer.from(data, 'utf8') : data)
+  }
+
+  kill(signal?: string): void {
+    this.killedWith = signal
+  }
+
+  pause(): void {
+    this.paused = true
+  }
+
+  resume(): void {
+    this.paused = false
+  }
+}
+
+/** Comfortably under the drain windows below, so ordering is never in doubt. */
+const QUIET_MS = 25
+const MAX_DRAIN_MS = 150
+
+async function spawnFake(
+  options: Partial<NodePtyTerminalHostOptions> = {},
+): Promise<{ host: NodePtyTerminalHost; pty: FakePty; session: PtySession }> {
+  const root = await makeRoot()
+  const pty = new FakePty()
+  const host = new NodePtyTerminalHost({
+    notesRoot: root,
+    exitDrainQuietMs: QUIET_MS,
+    exitDrainMaxMs: MAX_DRAIN_MS,
+    // A fake pty's `kill` cannot make a child die, so the teardown in `afterEach`
+    // always has to wait this out. Keeping it short means a test that forgets to
+    // emit an exit is a fast failure rather than a slow suite.
+    killGraceMs: 50,
+    spawnPty: () => pty,
+    ...options,
+  })
+  hosts.push(host)
+
+  return { host, pty, session: await host.spawn({ cols: 80, rows: 24 }) }
+}
+
+describe('exit and the drain that follows it', () => {
+  it('delivers output that arrives after the child has been reaped', async () => {
+    const { pty, session } = await spawnFake()
+    const output = collect(session)
+
+    pty.emitData(Buffer.from('before the exit\n', 'utf8'))
+    pty.emitExit(0)
+
+    // The whole bug, in one line: the process is gone and the last thing it
+    // wrote has not been read yet. A session that treats the reap as the end of
+    // the stream drops this, and in production it is the final redraw.
+    pty.emitData(Buffer.from('after the exit\n', 'utf8'))
+
+    const exit = await session.waitForExit()
+
+    expect(exit).toEqual({ code: 0, signal: undefined })
+    expect(output.text()).toBe('before the exit\nafter the exit\n')
+    expect(output.bytes().toString('utf8')).toBe('before the exit\nafter the exit\n')
+  })
+
+  it('does not report the exit until the output has stopped', async () => {
+    const { session, pty } = await spawnFake()
+    const output = collect(session)
+
+    let settled = false
+    const exited = session.waitForExit().then((exit) => {
+      settled = true
+      return exit
+    })
+
+    pty.emitExit(0)
+
+    // A trickle, each chunk landing inside the quiet window. Exit stays pending
+    // for as long as the stream keeps producing, because a caller awaiting it
+    // means "let me see what it printed" and it has not finished printing.
+    for (let i = 0; i < 4; i++) {
+      await delay(QUIET_MS / 2)
+      expect(settled).toBe(false)
+      expect(session.exit).toBeNull()
+      pty.emitData(Buffer.from(`chunk ${i}\n`, 'utf8'))
+    }
+
+    await exited
+    expect(output.text()).toBe('chunk 0\nchunk 1\nchunk 2\nchunk 3\n')
+  })
+
+  it('holds a multibyte character split across the exit', async () => {
+    const { session, pty } = await spawnFake()
+    const output = collect(session)
+
+    // U+1F600, cut between its third and fourth byte by the child dying. This is
+    // the boundary case the StringDecoder exists for, and the one place where
+    // ending the decoder a moment early is visible as a replacement character
+    // rather than as missing bytes.
+    const emoji = Buffer.from('😀', 'utf8')
+    pty.emitData(emoji.subarray(0, 3))
+    pty.emitExit(0)
+    pty.emitData(emoji.subarray(3))
+
+    await session.waitForExit()
+
+    expect(output.bytes().equals(emoji)).toBe(true)
+    expect(output.text()).toBe('😀')
+    expect(output.text()).not.toContain('�')
+  })
+
+  it('stops waiting once the drain has had its cap', async () => {
+    const { session, pty } = await spawnFake()
+    const output = collect(session)
+
+    pty.emitExit(0)
+
+    // A stream that never goes quiet must not hold the exit open forever: a
+    // session that cannot settle is one the reaper cannot collect and shutdown
+    // cannot finish. The bytes still get through right up to the cap.
+    const noisy = setInterval(() => pty.emitData(Buffer.from('.', 'utf8')), QUIET_MS / 5)
+
+    try {
+      const started = Date.now()
+      await session.waitForExit()
+      const waited = Date.now() - started
+
+      expect(waited).toBeGreaterThanOrEqual(MAX_DRAIN_MS - QUIET_MS)
+      expect(waited).toBeLessThan(MAX_DRAIN_MS * 4)
+      expect(output.bytes().length).toBeGreaterThan(0)
+    } finally {
+      clearInterval(noisy)
+    }
+  })
+
+  it('settles immediately when the drain window is turned off', async () => {
+    const { session, pty } = await spawnFake({ exitDrainQuietMs: 0 })
+
+    pty.emitExit(7, 15)
+    expect(session.exit).toEqual({ code: 7, signal: 15 })
+    await expect(session.waitForExit()).resolves.toEqual({ code: 7, signal: 15 })
+  })
+
+  it('lets go of a flow-control pause when the child dies', async () => {
+    const { session, pty } = await spawnFake()
+    const output = collect(session)
+
+    session.pause()
+    session.pause()
+    expect(pty.paused).toBe(true)
+
+    // node-pty destroys the pty master 200ms after the child is reaped whether
+    // or not anyone has read what is left in it, so a session still paused at
+    // that moment loses its tail outright. Back pressure against a dead child
+    // buys nothing and costs exactly the output that matters most.
+    pty.emitExit(0)
+    expect(pty.paused).toBe(false)
+
+    session.pause()
+    expect(pty.paused).toBe(false)
+
+    pty.emitData(Buffer.from('drained anyway\n', 'utf8'))
+    await session.waitForExit()
+
+    expect(output.text()).toBe('drained anyway\n')
+  })
+
+  it('stops writing to and signalling a child that is already gone', async () => {
+    const { session, pty } = await spawnFake()
+
+    pty.emitExit(0)
+
+    // Still draining, so the session has not settled -- but the fd on the other
+    // end has nothing reading it, and SIGHUP has nobody to reach.
+    expect(session.exit).toBeNull()
+    session.write('ignored')
+    session.resize(120, 40)
+    session.nudgeRedraw()
+
+    expect(pty.writes).toHaveLength(0)
+    expect(pty.resizes).toHaveLength(0)
+    expect(session.cols).toBe(80)
+
+    await session.waitForExit()
+  })
+
+  it('keeps the session listed and its scrollback intact until the exit settles', async () => {
+    const { host, session, pty } = await spawnFake()
+
+    pty.emitData(Buffer.from('hello', 'utf8'))
+    pty.emitExit(0)
+    pty.emitData(Buffer.from(' there', 'utf8'))
+
+    // A client reconnecting inside the drain window still gets served: the ring
+    // is released on the settled exit, not on the reap.
+    expect(host.get(session.id)).toBe(session)
+    expect(session.scrollbackSince(null).bytes.toString('utf8')).toBe('hello there')
+    expect(session.bytesProduced).toBe(11)
+
+    await session.waitForExit()
+    await waitFor(() => host.get(session.id) === null)
   })
 })

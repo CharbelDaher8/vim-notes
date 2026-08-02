@@ -23,6 +23,11 @@
  *      and environment all come from this adapter's construction, and a caller
  *      that supplies them is refused rather than quietly overridden -- the same
  *      reflex as NotePath rejecting `..` instead of resolving it.
+ *   4. A dead child is not the same event as a finished stream. The last thing a
+ *      program writes is the thing a user most wants to see -- the final redraw,
+ *      the error before the crash -- and it is also the thing most likely to
+ *      still be in a kernel buffer at the moment the process is reaped. So exit
+ *      is *settled* rather than reported: see `handleChildExit`.
  *
  * What this is *not* is a sandbox, and it would be dishonest to imply otherwise.
  * nvim in a pty can `:e /etc/passwd` and `:!sh` no matter what cwd it was given,
@@ -44,6 +49,15 @@ import type {
   Unsubscribe,
 } from '@vim-notes/core'
 import { spawn as spawnPty, type IPty } from 'node-pty'
+
+/**
+ * How this host opens a pty. Production always uses node-pty's own `spawn`; the
+ * seam exists because the one property that matters most here -- that no byte
+ * the child produced is dropped when it dies -- is decided by the *order* of two
+ * events, and a real kernel will not order them on request. A fake pty makes
+ * that ordering a thing a test states rather than a thing a test hopes for.
+ */
+export type PtySpawner = typeof spawnPty
 
 /**
  * Belongs in core's error taxonomy next to NoteStoreError, on the same argument
@@ -96,6 +110,20 @@ const DEFAULT_MAX_SESSIONS = 8
 /** How long a SIGHUP gets to work before shutdown escalates to SIGKILL. */
 const DEFAULT_KILL_GRACE_MS = 2_000
 
+/**
+ * The drain window: how long a session keeps listening after its child has been
+ * reaped, and the hard cap on that wait. See `handleChildExit` for what this is
+ * defending against and what it cannot defend against.
+ *
+ * The quiet window is short because in the common case there is nothing to wait
+ * for, and every millisecond here is added to the latency of `:q`. The cap is
+ * just past node-pty's own `DESTROY_SOCKET_TIMEOUT_MS` of 200ms, because that is
+ * the point at which node-pty tears the pty master down itself and no further
+ * byte can arrive no matter how long anyone waits.
+ */
+const DEFAULT_EXIT_DRAIN_QUIET_MS = 20
+const DEFAULT_EXIT_DRAIN_MAX_MS = 250
+
 export interface NodePtyTerminalHostOptions {
   /** Absolute path. Forced as every session's cwd; never taken from a client. */
   notesRoot: string
@@ -110,12 +138,17 @@ export interface NodePtyTerminalHostOptions {
   reapIntervalMs?: number
   maxSessions?: number
   killGraceMs?: number
+  /** Zero settles exit as soon as the child is reaped. See `handleChildExit`. */
+  exitDrainQuietMs?: number
+  exitDrainMaxMs?: number
   /**
    * Where a reaped or failed session goes to be noticed. There is nobody to
    * return these to -- the reaper runs on a timer, and a pty that dies has no
    * pending request -- so without a sink they vanish.
    */
   onError?: (error: unknown) => void
+  /** Only ever replaced by tests. See `PtySpawner`. */
+  spawnPty?: PtySpawner
 }
 
 /**
@@ -147,7 +180,12 @@ export interface ScrollbackReplay {
 export interface PtySession extends TerminalSession {
   readonly cols: number
   readonly rows: number
-  /** Non-null once the child has exited. */
+  /**
+   * Non-null once the child has exited *and* its output has been delivered, in
+   * that order. Not simply "the process is gone": a session whose child was
+   * reaped a moment ago but whose last chunk is still in flight reads as null
+   * here, because a consumer that saw the exit would stop reading and lose it.
+   */
   readonly exit: TerminalExit | null
   /** How many connections are currently attached. */
   readonly attachments: number
@@ -166,11 +204,34 @@ export interface PtySession extends TerminalSession {
    */
   attach(): Unsubscribe
 
-  /** Reference-counted flow control, for a socket that cannot keep up. */
+  /**
+   * Reference-counted flow control, for a socket that cannot keep up.
+   *
+   * Carries a hazard worth stating plainly, because it is not this adapter's to
+   * fix. A paused pty is a *stopped* pty, and node-pty destroys the master 200ms
+   * after the child is reaped whether or not anything has read what is left in
+   * it -- so a session that is still paused when its child exits loses whatever
+   * had not been delivered, and loses it below this layer, where nothing here
+   * can see it happen let alone recover it.
+   *
+   * What is done about it here is the part that is visible from here: once the
+   * child's exit has been reported, `pause` is a no-op and any outstanding
+   * pauses are dropped. That covers a consumer congesting during the drain. It
+   * does not cover a pause that was already in place when the child died, since
+   * node-pty does not report the exit until the master has already closed. A
+   * consumer that can pause for a long time -- a slow socket -- wants back
+   * pressure that does not stop the pty at all.
+   */
   pause(): void
   resume(): void
 
-  /** Settles with the exit that has already happened, if it already has. */
+  /**
+   * Settles once the child has exited and its output has been delivered.
+   *
+   * The second half is the point. `await session.waitForExit()` is what a caller
+   * writes when it means "the program is done, let me look at what it printed",
+   * and that reading is only true if nothing can still arrive afterwards.
+   */
   waitForExit(): Promise<TerminalExit>
 
   /**
@@ -190,7 +251,10 @@ export class NodePtyTerminalHost implements TerminalHost {
   private readonly reapIntervalMs: number
   private readonly maxSessions: number
   private readonly killGraceMs: number
+  private readonly exitDrainQuietMs: number
+  private readonly exitDrainMaxMs: number
   private readonly onError: (error: unknown) => void
+  private readonly spawnPty: PtySpawner
 
   private readonly sessions = new Map<string, NodePtySession>()
   private reaper: ReturnType<typeof setInterval> | null = null
@@ -213,7 +277,10 @@ export class NodePtyTerminalHost implements TerminalHost {
     this.reapIntervalMs = options.reapIntervalMs ?? DEFAULT_REAP_INTERVAL_MS
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
+    this.exitDrainQuietMs = options.exitDrainQuietMs ?? DEFAULT_EXIT_DRAIN_QUIET_MS
+    this.exitDrainMaxMs = options.exitDrainMaxMs ?? DEFAULT_EXIT_DRAIN_MAX_MS
     this.onError = options.onError ?? (() => {})
+    this.spawnPty = options.spawnPty ?? spawnPty
   }
 
   async spawn(options: TerminalSpawnOptions): Promise<PtySession> {
@@ -237,7 +304,7 @@ export class NodePtyTerminalHost implements TerminalHost {
     const cols = clampDimension(options.cols, DEFAULT_COLS)
     const rows = clampDimension(options.rows, DEFAULT_ROWS)
 
-    const pty = spawnPty(this.command, this.args, {
+    const pty = this.spawnPty(this.command, this.args, {
       name: this.term,
       cols,
       rows,
@@ -251,10 +318,16 @@ export class NodePtyTerminalHost implements TerminalHost {
       cols,
       rows,
       scrollbackBytes: this.scrollbackBytes,
+      exitDrainQuietMs: this.exitDrainQuietMs,
+      exitDrainMaxMs: this.exitDrainMaxMs,
       onError: this.onError,
     })
 
     this.sessions.set(session.id, session)
+    // Deregistered on the settled exit rather than the child's death, so the
+    // brief drain window cannot hand a resuming client a session that is about
+    // to announce an exit it has not been told about. It costs a slot for a few
+    // milliseconds, which `maxSessions` will never notice.
     session.onExit(() => {
       this.sessions.delete(session.id)
     })
@@ -409,6 +482,8 @@ interface SessionOptions {
   cols: number
   rows: number
   scrollbackBytes: number
+  exitDrainQuietMs: number
+  exitDrainMaxMs: number
   onError: (error: unknown) => void
 }
 
@@ -434,12 +509,27 @@ class NodePtySession implements PtySession {
    */
   private decoder: StringDecoder | null = null
 
+  private readonly exitDrainQuietMs: number
+  private readonly exitDrainMaxMs: number
+
   private currentCols: number
   private currentRows: number
   private attached = 0
   private pauseCount = 0
   private idleSince = Date.now()
+
+  /**
+   * The two halves of "this session is over", deliberately separate.
+   *
+   * `childExit` is the fact the OS reported: the process is gone, so writing to
+   * it, resizing it or signalling it are all pointless. `exitState` is the fact
+   * a *consumer* cares about: the process is gone and everything it produced has
+   * been handed over. Everything public settles on the second one.
+   */
+  private childExit: TerminalExit | null = null
   private exitState: TerminalExit | null = null
+  private drainQuietTimer: ReturnType<typeof setTimeout> | null = null
+  private drainDeadlineTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private readonly pty: IPty,
@@ -448,6 +538,8 @@ class NodePtySession implements PtySession {
     this.currentCols = options.cols
     this.currentRows = options.rows
     this.scrollback = new ScrollbackRing(options.scrollbackBytes)
+    this.exitDrainQuietMs = options.exitDrainQuietMs
+    this.exitDrainMaxMs = options.exitDrainMaxMs
     this.onErrorSink = options.onError
 
     // node-pty types `onData` as IEvent<string> unconditionally, but with
@@ -455,7 +547,7 @@ class NodePtySession implements PtySession {
     // delivers Buffers. The cast is where that gap in the typings is absorbed;
     // it is asserted by the tests, which check `Buffer.isBuffer` on real output.
     this.pty.onData((chunk) => this.handleData(chunk as unknown as Buffer))
-    this.pty.onExit(({ exitCode, signal }) => this.handleExit(exitCode, signal))
+    this.pty.onExit(({ exitCode, signal }) => this.handleChildExit(exitCode, signal))
   }
 
   get cols(): number {
@@ -483,12 +575,14 @@ class NodePtySession implements PtySession {
   }
 
   writeBytes(data: Buffer): void {
-    if (this.exitState !== null) return
+    // Keyed on the child rather than the settled exit: during the drain there is
+    // no longer anything on the other end of the fd to read this.
+    if (this.childExit !== null) return
     this.pty.write(data)
   }
 
   resize(cols: number, rows: number): void {
-    if (this.exitState !== null) return
+    if (this.childExit !== null) return
 
     const nextCols = clampDimension(cols, this.currentCols)
     const nextRows = clampDimension(rows, this.currentRows)
@@ -517,7 +611,7 @@ class NodePtySession implements PtySession {
    * lever that makes a full-screen application do that on demand.
    */
   nudgeRedraw(): void {
-    if (this.exitState !== null) return
+    if (this.childExit !== null) return
 
     const cols = this.currentCols
     const rows = this.currentRows
@@ -611,6 +705,12 @@ class NodePtySession implements PtySession {
   }
 
   pause(): void {
+    // A stopped pty whose child has already died is not back pressure, it is
+    // just undelivered output waiting to be destroyed -- node-pty tears the
+    // master down 200ms after the reap regardless of who is reading. Nothing is
+    // gained by throttling a stream that has a known, finite amount left.
+    if (this.childExit !== null) return
+
     this.pauseCount += 1
     if (this.pauseCount === 1) this.safely(() => this.pty.pause())
   }
@@ -622,7 +722,7 @@ class NodePtySession implements PtySession {
   }
 
   kill(signal?: string): void {
-    if (this.exitState !== null) return
+    if (this.childExit !== null) return
     this.pty.kill(signal)
   }
 
@@ -639,11 +739,21 @@ class NodePtySession implements PtySession {
   }
 
   private handleData(chunk: Buffer): void {
+    // Past the settled exit the listeners are gone and the ring has been
+    // released, so there is nowhere for this to go. node-pty should not deliver
+    // here at all; dropping silently rather than throwing keeps a version that
+    // does from taking the process down over bytes nobody can use.
+    if (this.exitState !== null) return
+
     this.scrollback.push(chunk)
 
     for (const listener of this.byteListeners) {
       this.safely(() => listener(chunk))
     }
+
+    // Output during the drain is exactly what the drain is for, so every chunk
+    // buys the stream another quiet window to produce a successor in.
+    if (this.childExit !== null) this.armDrainQuietTimer()
 
     if (this.decoder === null) return
 
@@ -655,13 +765,77 @@ class NodePtySession implements PtySession {
     }
   }
 
-  private handleExit(exitCode: number, signal: number | undefined): void {
-    if (this.exitState !== null) return
+  /**
+   * The child is gone. Keep reading anyway, for a moment.
+   *
+   * Being told a process was reaped is not being told its output arrived: the
+   * last thing it wrote can still be sitting in a tty buffer, and the two facts
+   * reach this process by different routes -- one through `waitpid` on a thread
+   * of its own, one through the event loop reading an fd. node-pty's own source
+   * says as much ("Sometimes a data event is emitted after exit"), and its
+   * defence against it is to hold the exit event back until the pty master
+   * closes, with a 200ms escape hatch that *destroys* the master if it has not.
+   *
+   * So this waits for the stream to go quiet rather than for the process to die,
+   * and only then tears anything down. What that buys is a `waitForExit` a
+   * caller can trust and a final redraw a user actually sees.
+   *
+   * What it does not buy, and this is worth being blunt about: bytes node-pty
+   * has already thrown away are not recoverable here, and both ways of throwing
+   * them away happen before this method is ever called. If the event loop stalls
+   * past that 200ms escape hatch, or if a consumer holds the pty paused across
+   * the child's death, the master is destroyed with data still in it and the
+   * exit is only reported afterwards -- so waiting produces nothing. Neither is
+   * fixable from inside this class; see `pause` on the port for the shape of the
+   * one that is ours. The cap below is set past node-pty's window purely so that
+   * this code is never the thing still waiting once nothing more can arrive.
+   */
+  private handleChildExit(exitCode: number, signal: number | undefined): void {
+    if (this.childExit !== null) return
 
     // node-pty reports 0 for "no signal"; the port models that absence as
     // undefined so a caller cannot mistake it for signal number zero.
-    const exit: TerminalExit = { code: exitCode, signal: signal === 0 ? undefined : signal }
+    this.childExit = { code: exitCode, signal: signal === 0 ? undefined : signal }
+
+    // Nothing is left to throttle: what the pty still holds is finite and its
+    // producer is dead. Too late to rescue a pause that was already in place
+    // when the child died -- by now node-pty has destroyed the master -- but it
+    // leaves the drain unobstructed and stops a consumer that is still counting
+    // its own pauses from stopping the stream again halfway through.
+    this.pauseCount = 0
+    this.safely(() => this.pty.resume())
+
+    if (this.exitDrainQuietMs <= 0) {
+      this.settleExit()
+      return
+    }
+
+    this.armDrainQuietTimer()
+    this.drainDeadlineTimer = setTimeout(() => this.settleExit(), this.exitDrainMaxMs)
+  }
+
+  /**
+   * Restarted by every chunk, so a steady trickle is never cut off mid-flow.
+   *
+   * Deliberately *not* unref'd, unlike the reaper and the kill grace. Those are
+   * timers that only matter when something has gone wrong, and a process should
+   * never be held open by one. This one is on the ordinary path of every exit:
+   * unref it and a session whose pty has already closed can find itself the last
+   * thing on a loop with nothing to keep it turning, so the process leaves
+   * before the exit is ever announced and `waitForExit` resolves for nobody.
+   * What it can cost in exchange is bounded by `exitDrainMaxMs`.
+   */
+  private armDrainQuietTimer(): void {
+    if (this.drainQuietTimer !== null) clearTimeout(this.drainQuietTimer)
+    this.drainQuietTimer = setTimeout(() => this.settleExit(), this.exitDrainQuietMs)
+  }
+
+  private settleExit(): void {
+    const exit = this.childExit
+    if (exit === null || this.exitState !== null) return
+
     this.exitState = exit
+    this.clearDrainTimers()
 
     const tail = this.decoder?.end() ?? ''
     if (tail !== '') {
@@ -679,6 +853,13 @@ class NodePtySession implements PtySession {
     this.scrollback.clear()
 
     for (const listener of listeners) this.safely(() => listener(exit))
+  }
+
+  private clearDrainTimers(): void {
+    if (this.drainQuietTimer !== null) clearTimeout(this.drainQuietTimer)
+    if (this.drainDeadlineTimer !== null) clearTimeout(this.drainDeadlineTimer)
+    this.drainQuietTimer = null
+    this.drainDeadlineTimer = null
   }
 
   /**
