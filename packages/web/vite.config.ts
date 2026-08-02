@@ -16,6 +16,23 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+
+    rollupOptions: {
+      treeshake: {
+        /**
+         * `@vim-notes/core` is the interior of the hexagon: no I/O, no Node
+         * builtins, no module-level effects -- and that is enforced by lint,
+         * not just asserted. Telling the bundler so lets it drop the parts the
+         * browser never touches.
+         *
+         * Concretely: core's barrel re-exports `schemas/index`, which builds
+         * zod schemas at module scope. The server validates with those; this
+         * client only ever imports types and pure functions from core, so
+         * without this the browser downloads all of zod to use none of it.
+         */
+        moduleSideEffects: (id) => !id.includes('/packages/core/'),
+      },
+    },
   },
 
   test: {

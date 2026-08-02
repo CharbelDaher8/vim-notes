@@ -14,7 +14,6 @@
  *     undo history every time someone toggles it (DECISIONS.md §4).
  */
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { markdown, markdownKeymap } from '@codemirror/lang-markdown'
 import {
   Annotation,
   Compartment,
@@ -37,6 +36,7 @@ import {
 import { editorCommands, type EditorCommands } from './editor-commands'
 import { editorTheme } from './editor-theme'
 import { markdownDecorations } from './markdown-decorations'
+import { loadMarkdownLanguage, markdownLanguageExtension } from './markdown-language'
 import { loadVim, vimExtension } from './vim-extension'
 
 /**
@@ -74,6 +74,7 @@ export interface CreateEditorOptions {
 
 export function createEditor(options: CreateEditorOptions): EditorHandle {
   const vimCompartment = new Compartment()
+  const languageCompartment = new Compartment()
   const themeCompartment = new Compartment()
   const keyboardCompartment = new Compartment()
   const gutterCompartment = new Compartment()
@@ -106,7 +107,9 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
     editorCommands.of(commands),
 
     history(),
-    markdown(),
+    // Ahead of the default keymap so Enter continues a list rather than just
+    // breaking the line. Empty until the chunk lands; see markdown-language.ts.
+    languageCompartment.of(markdownLanguageExtension()),
     markdownDecorations,
     EditorView.lineWrapping,
     drawSelection(),
@@ -115,7 +118,7 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
     gutterCompartment.of(gutterExtensions(vimEnabled)),
     placeholder('Nothing here yet.'),
 
-    keymap.of([...markdownKeymap, ...historyKeymap, ...defaultKeymap]),
+    keymap.of([...historyKeymap, ...defaultKeymap]),
     keyboardCompartment.of(keyboardExtensions(vimEnabled)),
 
     themeCompartment.of(editorTheme(dark)),
@@ -161,7 +164,15 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
     )
   }
 
+  /**
+   * Both lazy chunks reconfigure the editor when they land, and either can
+   * resolve after the pane has unmounted -- reliably so under StrictMode, which
+   * mounts, unmounts and remounts. `dispatch` on a destroyed view throws.
+   */
+  let destroyed = false
+
   const applyVim = () => {
+    if (destroyed) return
     view.dispatch({
       effects: [
         vimCompartment.reconfigure(vimExtension(vimEnabled)),
@@ -175,6 +186,12 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
   // reconfigure with it on may land a frame or two after the request. Anything
   // toggled in the meantime wins -- `applyVim` always reads the current flag.
   if (vimEnabled) void loadVim().then(applyVim)
+
+  // Always wanted, just not needed for the first paint.
+  void loadMarkdownLanguage().then(() => {
+    if (destroyed) return
+    view.dispatch({ effects: languageCompartment.reconfigure(markdownLanguageExtension()) })
+  })
 
   return {
     view,
@@ -223,7 +240,10 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
 
     focus: () => view.focus(),
 
-    destroy: () => view.destroy(),
+    destroy: () => {
+      destroyed = true
+      view.destroy()
+    },
   }
 }
 

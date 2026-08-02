@@ -27,8 +27,22 @@ import type {
 /** Only used for diagnostics and for gating dev-only affordances. */
 export type PlatformId = 'in-memory' | 'web' | 'tauri'
 
+/**
+ * The window itself, as opposed to the data behind it.
+ *
+ * Separated from the note operations because it is the part with genuinely
+ * different implementations rather than a different transport: in a browser tab
+ * the title is `document.title`, and in the Tauri build it is the real OS window
+ * title. Feature code should not have to know which it is running in.
+ */
+export interface PlatformHost {
+  setWindowTitle(title: string): void
+}
+
 export interface Platform {
   readonly id: PlatformId
+
+  readonly host: PlatformHost
 
   tree(): Promise<TreeEntry[]>
 

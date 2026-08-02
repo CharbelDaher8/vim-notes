@@ -1,0 +1,36 @@
+.terminal {
+  display: flex;
+  flex-direction: column;
+  height: var(--viewport-height, 100dvh);
+  padding: 0.4rem 0.4rem 0;
+  background: var(--surface);
+}
+
+.terminal__surface {
+  flex: 1;
+  min-height: 0;
+}
+
+/* xterm sizes its own canvas; it only needs the box to fill. */
+.terminal__surface .xterm {
+  height: 100%;
+}
+
+.terminal__status {
+  flex: none;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.terminal__status[data-state='reconnecting'] {
+  color: var(--warn);
+}
+
+.terminal__status[data-state='exited'],
+.terminal__status[data-state='closed'] {
+  color: var(--danger);
+}

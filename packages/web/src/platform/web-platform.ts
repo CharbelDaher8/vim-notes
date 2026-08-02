@@ -33,6 +33,7 @@ import {
 } from '@vim-notes/core'
 
 import type { Platform } from './platform'
+import { documentHost } from './document-host'
 
 export interface NotesApiClient {
   notes: {
@@ -54,6 +55,7 @@ export interface NotesApiClient {
 
 export class WebPlatform implements Platform {
   readonly id = 'web' as const
+  readonly host = documentHost
 
   readonly #client: NotesApiClient
 

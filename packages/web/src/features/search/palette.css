@@ -1,0 +1,249 @@
+/*
+ * Sits near the top of the viewport rather than centred. A palette appears
+ * under the cursor's attention and grows downwards; centring it means the list
+ * shifts the input every time the number of results changes.
+ */
+
+.palette {
+  width: min(38rem, calc(100vw - 1.5rem));
+  max-height: min(70dvh, 34rem);
+  margin: min(12vh, 5rem) auto auto;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+}
+
+.palette[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.palette::backdrop {
+  background: var(--backdrop);
+  backdrop-filter: blur(2px);
+}
+
+/* --- Input ---------------------------------------------------------------- */
+
+.palette__field {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: none;
+  padding: 0.15rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.palette__field > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.palette__input {
+  flex: 1;
+  min-width: 0;
+  min-height: 3rem;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  /* Under 16px iOS Safari zooms the page on focus, which on a phone leaves the
+     palette half off-screen. */
+  font-size: max(16px, var(--text-lg));
+}
+
+.palette__input::placeholder {
+  color: var(--text-faint);
+}
+
+/* The field is the visible control; a ring around the bare input inside it
+   would draw a box in the middle of the row. */
+.palette__input:focus-visible {
+  outline: none;
+}
+
+.palette__field:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.palette__spinner {
+  flex: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: palette-spin 700ms linear infinite;
+}
+
+@keyframes palette-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette__spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* --- Results -------------------------------------------------------------- */
+
+.palette__results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.palette__message {
+  padding: 1.5rem 1rem;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.palette__section + .palette__section {
+  border-top: 1px solid var(--border);
+}
+
+.palette__heading {
+  margin: 0;
+  padding: 0.7rem 0.85rem 0.25rem;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.palette__path {
+  margin: 0;
+  padding: 0.5rem 0.85rem 0.15rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.palette__option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  /* 40px: this has to stay usable if it is ever opened on a touch screen. */
+  min-height: 2.5rem;
+  padding: 0.2rem 0.85rem;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/*
+ * One highlight, driven by the selection rather than by :hover. With both, the
+ * row under a resting cursor and the row the arrow keys are on would light up
+ * at the same time and Enter would look ambiguous.
+ */
+.palette__option[data-selected] {
+  background: var(--accent-soft);
+}
+
+.palette__option[data-selected] .palette__name {
+  color: var(--accent);
+}
+
+.palette__option > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.palette__name {
+  flex: none;
+  font-weight: 500;
+}
+
+.palette__dir {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette__line {
+  flex: none;
+  min-width: 2.5ch;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
+.palette__preview {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette__preview mark {
+  border-radius: 2px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- Footer --------------------------------------------------------------- */
+
+.palette__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex: none;
+  padding: 0.4rem 0.85rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.palette__hints {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.palette__hints kbd {
+  min-width: 1.4em;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 0.95em;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.palette__hints span + kbd {
+  margin-left: 0.35rem;
+}
+
+.palette__count {
+  white-space: nowrap;
+}
+
+/* The hints are for people using a keyboard, who by definition are not on the
+   narrow screen where the footer would wrap. */
+@media (max-width: 30rem) {
+  .palette__hints {
+    display: none;
+  }
+}

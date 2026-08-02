@@ -33,6 +33,7 @@ import {
 
 import { byteLength, hashContent } from './content-hash'
 import type { Platform } from './platform'
+import { documentHost } from './document-host'
 
 interface FileRecord {
   content: string
@@ -50,6 +51,7 @@ export interface InMemoryPlatformOptions {
 
 export class InMemoryPlatform implements Platform {
   readonly id = 'in-memory' as const
+  readonly host = documentHost
 
   readonly #files = new Map<NotePath, FileRecord>()
   /** Directories with no files under them; the rest are derived from paths. */

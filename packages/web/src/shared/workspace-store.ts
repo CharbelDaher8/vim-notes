@@ -32,6 +32,11 @@ interface WorkspaceState {
   /** The mobile drawer. On desktop the sidebar is always laid out. */
   drawerOpen: boolean
   sidebarPanel: SidebarPanel
+  /**
+   * The command palette. Here rather than in the component because the keyboard
+   * shortcut that opens it is bound at the window, a long way from the dialog.
+   */
+  paletteOpen: boolean
 
   openNote: (path: NotePath, reveal?: RevealTarget) => Promise<void>
   closeNote: () => Promise<void>
@@ -40,6 +45,7 @@ interface WorkspaceState {
   clearReveal: () => void
   setDrawerOpen: (open: boolean) => void
   setSidebarPanel: (panel: SidebarPanel) => void
+  setPaletteOpen: (open: boolean) => void
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
@@ -47,6 +53,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   reveal: null,
   drawerOpen: false,
   sidebarPanel: 'files',
+  paletteOpen: false,
 
   openNote: async (path, reveal) => {
     if (get().openPath !== path && navigationGuard !== null) {
@@ -71,4 +78,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
 
   setSidebarPanel: (sidebarPanel) => set({ sidebarPanel, drawerOpen: true }),
+
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
 }))
