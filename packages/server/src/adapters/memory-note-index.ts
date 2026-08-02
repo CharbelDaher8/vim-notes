@@ -265,6 +265,7 @@ export class MemoryNoteIndex implements NoteIndex {
         kind: 'note',
         label: noteLabel(note.path),
         path: note.path,
+        line: null,
         day: note.day,
         done: null,
       })
@@ -281,6 +282,7 @@ export class MemoryNoteIndex implements NoteIndex {
           kind: 'day',
           label: note.day,
           path: null,
+          line: null,
           day: note.day,
           done: null,
         })
@@ -297,6 +299,11 @@ export class MemoryNoteIndex implements NoteIndex {
           kind: annotation.kind,
           label: annotation.text,
           path: note.path,
+          // The one field here that is *not* stable across an edit, and that is
+          // the point of it being a field: inserting a line above a task moves
+          // its line while its id stays put, so the layout holds and the jump
+          // target still lands on the right row.
+          line: annotation.line,
           day: note.day,
           done: annotation.done,
         })
@@ -336,6 +343,11 @@ export class MemoryNoteIndex implements NoteIndex {
             // unrelated note was saved.
             label: normaliseTarget(link.target),
             path: null,
+            // Deliberately null even though the link was written on a line.
+            // Several notes can link the same missing name, so there is no one
+            // line this node points at, and picking the first one walked would
+            // send a click to an unrelated note.
+            line: null,
             day: null,
             done: null,
           })

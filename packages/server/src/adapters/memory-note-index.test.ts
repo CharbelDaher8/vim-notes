@@ -448,6 +448,54 @@ describe('MemoryNoteIndex graph', () => {
 
     expect(idsOf(await index.graph(), 'todo')).toHaveLength(2)
   })
+
+  it('points annotation nodes at their line, and nothing else at one', async () => {
+    const { index } = await build({
+      'journal/2026-08-02.md': 'a heading\nTODO alpha\nsee [[gone]]\nReminder beta\n',
+    })
+
+    const graph = await index.graph()
+    const lineOf = (kind: string, label: string): number | null =>
+      graph.nodes.find((node) => node.kind === kind && node.label === label)?.line ?? null
+
+    expect(lineOf('todo', 'alpha')).toBe(2)
+    expect(lineOf('reminder', 'beta')).toBe(4)
+
+    // Notes, days and missing targets have no single line to open at.
+    for (const node of graph.nodes) {
+      if (node.kind === 'todo' || node.kind === 'reminder') continue
+      expect(node.line).toBeNull()
+    }
+  })
+
+  it('moves the line but not the id when a task shifts down the note', async () => {
+    const { store, watcher, index } = await build({
+      'journal/2026-08-02.md': 'TODO alpha\n',
+    })
+
+    const before = (await index.graph()).nodes.find((node) => node.kind === 'todo')
+    expect(before?.line).toBe(1)
+
+    await save(store, watcher, 'journal/2026-08-02.md', 'a heading\n\nTODO alpha\n')
+
+    // The whole reason the line is its own field: the id holds the layout still
+    // while the line follows the text.
+    const after = (await index.graph()).nodes.find((node) => node.kind === 'todo')
+    expect(after?.id).toBe(before?.id)
+    expect(after?.line).toBe(3)
+  })
+
+  it('tells two identical tasks apart by line', async () => {
+    const { index } = await build({ 'journal/2026-08-02.md': 'TODO alpha\nTODO alpha\n' })
+
+    const lines = (await index.graph()).nodes
+      .filter((node) => node.kind === 'todo')
+      .map((node) => node.line)
+      .sort()
+
+    // The case that made matching on text alone unworkable for the graph view.
+    expect(lines).toEqual([1, 2])
+  })
 })
 
 describe('MemoryNoteIndex staying current', () => {
