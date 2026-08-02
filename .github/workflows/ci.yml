@@ -78,6 +78,17 @@ jobs:
           echo "::error title=Dependency install failed::three attempts failed to fetch dependencies. This is an install failure, not a test failure -- the commit has not been verified either way."
           exit 1
 
+      # ripgrep is a runtime dependency, not a convenience: the Search port
+      # shells out to it, and the runtime image installs it for the same reason.
+      # GitHub's ubuntu image does not ship it, so without this the search
+      # adapter's tests all fail with SearchUnavailableError -- correctly, which
+      # is the point. CI has to look like production or it tests something else.
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ripgrep
+          rg --version | head -1
+
       # typecheck, lint, format:check, test -- see the root package.json. One
       # script so that CI and `pnpm verify` on a laptop cannot drift apart.
       - name: Verify
