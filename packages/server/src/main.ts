@@ -7,9 +7,24 @@ import Fastify from 'fastify'
 import { appRouter } from './api/router'
 import { createApplication } from './composition'
 import { loadConfig } from './config'
+import { logPreflight, preflight } from './preflight'
 import { terminalSocketPlugin } from './ws/terminal-socket'
 
 const config = loadConfig()
+
+/**
+ * Check the host before building anything on top of it.
+ *
+ * Deliberately ahead of `createApplication`, which starts watchers and can
+ * spawn ptys: there is no point wiring up a server whose notes root is not a
+ * repository. `process.exit` rather than a throw, because a stack trace is the
+ * wrong output for "git is not installed" -- the message already says what to
+ * do, and a trace only buries it.
+ */
+const startup = await preflight(config)
+logPreflight(startup, console)
+if (!startup.ok) process.exit(1)
+
 const app = await createApplication(config)
 
 const fastify = Fastify({

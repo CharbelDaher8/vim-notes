@@ -83,6 +83,12 @@ jobs:
       # GitHub's ubuntu image does not ship it, so without this the search
       # adapter's tests all fail with SearchUnavailableError -- correctly, which
       # is the point. CI has to look like production or it tests something else.
+      #
+      # The full set the server shells out to is `requiredBinaries` in
+      # packages/server/src/preflight.ts, matched by the apt-get in
+      # deploy/Dockerfile. Only ripgrep is installed here: git is already on the
+      # runner, and nvim is not exercised by any test -- the terminal tests
+      # spawn /bin/sh. Add it here if that ever changes.
       - name: Install ripgrep
         run: |
           sudo apt-get update -qq

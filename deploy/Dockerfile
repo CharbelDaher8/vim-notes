@@ -53,8 +53,13 @@ RUN pnpm --filter @vim-notes/server deploy --prod --legacy /srv/deps
 
 FROM node:22-slim AS server
 
-# git   -- GitVersionControl shells out to it for every commit and sync.
-# ripgrep -- what the Search adapter runs.
+# The three binaries the server shells out to. This list has to agree with
+# `requiredBinaries` in packages/server/src/preflight.ts and with the install
+# step in .github/workflows/ci.yml -- nothing enforces that, so the server
+# checks all three at boot and says which one is missing.
+#
+# git     -- GitVersionControl shells out to it for every commit and sync.
+# ripgrep -- what the Search adapter runs (the binary is `rg`).
 # neovim  -- not a development convenience. DECISIONS §3: real nvim in a pty is
 #            the product, and /term is worthless without it.
 RUN apt-get update \
