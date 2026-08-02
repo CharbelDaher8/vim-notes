@@ -1,0 +1,4 @@
+# Generated from icons/app-icon.png by `pnpm icons`. Kept out of the repo
+# because they are derived: five binary files that would otherwise have to be
+# regenerated and re-committed together every time the source icon changes.
+src-tauri/icons/

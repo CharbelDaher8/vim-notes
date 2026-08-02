@@ -1,0 +1,28 @@
+[package]
+name = "vim-notes-desktop"
+version = "0.1.0"
+description = "Desktop shell for vim-notes"
+edition = "2021"
+rust-version = "1.77.2"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Not used by main.rs today. They are the two crates every Tauri command needs
+# the moment one is added, and they are already in the tree via tauri, so having
+# them here costs nothing and removes a step from the first command.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# DECISIONS §10 sells this over Electron on binary size -- 5 MB against 150 MB --
+# so the release profile is tuned for size rather than compile time. This is a
+# thin shell around a webview; there is no hot loop here for opt-level to help.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

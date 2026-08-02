@@ -1,12 +1,12 @@
 packages:
-  - "packages/*"
+  - 'packages/*'
 
 # Versions shared by more than one package live here so they can never drift
 # apart -- notably zod and the tRPC pair, which must match across the wire.
 catalog:
   zod: ^4.4.3
-  "@trpc/server": ^11.18.0
-  "@trpc/client": ^11.18.0
+  '@trpc/server': ^11.18.0
+  '@trpc/client': ^11.18.0
   react: ^19.2.8
   react-dom: ^19.2.8
 
