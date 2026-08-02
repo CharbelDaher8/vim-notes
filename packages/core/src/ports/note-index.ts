@@ -41,6 +41,19 @@ export interface GraphNode {
   label: string
   /** The note this node is, or the note an annotation was found in. */
   path: NotePath | null
+  /**
+   * Where an annotation node sits in its note, so clicking it in the graph can
+   * open the note at the right line. Null for notes and days, which have no
+   * single line to point at.
+   *
+   * Carried as its own field rather than being packed into `id` on purpose.
+   * Ids are content-derived so that inserting a line above a TODO does not
+   * change its identity and make the graph layout jump -- putting the line
+   * number in the id would trade exactly the property the id exists for. It
+   * cannot be recovered by matching on text either: the same task can appear
+   * twice in one note, and then there is nothing to tell the two apart.
+   */
+  line: number | null
   /** Set for day nodes and for annotations that belong to one. */
   day: string | null
   done: boolean | null
