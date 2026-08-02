@@ -180,6 +180,9 @@
 
 /* --- Labels --------------------------------------------------------------- */
 
+/* The size here is load-bearing, not styling: graph-scene.ts reserves room in
+   the layout using LABEL_FONT_SIZE, and if the two disagree the simulation
+   holds nodes the wrong distance apart and the labels collide again. */
 .graph__label {
   fill: var(--text-muted);
   font-family: var(--font-ui);
@@ -199,17 +202,25 @@
 }
 
 /*
- * Past a few hundred nodes the labels stop being readable and start being a
- * grey smear, so they are dropped -- with `display: none` rather than
- * `visibility`, which is what keeps the browser from laying out a thousand
- * pieces of text nobody can read. Pointing at one still names it.
+ * Three states, set on the group by the view rather than by React, because the
+ * middle one depends on the current zoom.
+ *
+ * `display: none` rather than `visibility: hidden` throughout: it is what keeps
+ * the browser from laying out a thousand pieces of text nobody can read.
+ *
+ *   on     every node names itself
+ *   hover  too many labels to draw at once; pointing at one names it
+ *   off    the zoom is so far out that a label would be grey texture rather
+ *          than a word, and hovering could not help because the label would be
+ *          just as small. The native tooltip does the job instead.
  */
-.graph__nodes:not([data-labelled]) .graph__label {
+.graph__nodes[data-labels='hover'] .graph__label,
+.graph__nodes[data-labels='off'] .graph__label {
   display: none;
 }
 
-.graph__nodes:not([data-labelled]) .graph__node:hover .graph__label,
-.graph__nodes:not([data-labelled]) .graph__node:focus .graph__label {
+.graph__nodes[data-labels='hover'] .graph__node:hover .graph__label,
+.graph__nodes[data-labels='hover'] .graph__node:focus .graph__label {
   display: inline;
 }
 

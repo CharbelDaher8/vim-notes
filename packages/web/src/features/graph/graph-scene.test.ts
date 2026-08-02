@@ -1,8 +1,17 @@
 import { assertNotePath, type GraphEdge, type GraphNode, type NoteGraph } from '@vim-notes/core'
 import { describe, expect, it } from 'vitest'
 
-import { createLayout } from './force-layout'
-import { buildScene, openTargetFor, truncateLabel, type SceneNode } from './graph-scene'
+import { createLayout, isSettled, step } from './force-layout'
+import {
+  buildScene,
+  estimateLabelWidth,
+  LABEL_FONT_SIZE,
+  LABEL_GAP,
+  openTargetFor,
+  truncateLabel,
+  type Scene,
+  type SceneNode,
+} from './graph-scene'
 
 const p = assertNotePath
 
@@ -396,6 +405,274 @@ describe('the scene lines up with the layout built from it', () => {
       expect(spring.a.id).toBe(scene.edges[index]?.source)
       expect(spring.b.id).toBe(scene.edges[index]?.target)
     }
+  })
+})
+
+describe('estimateLabelWidth', () => {
+  it('grows with the text', () => {
+    expect(estimateLabelWidth('ab', 10)).toBeGreaterThan(estimateLabelWidth('a', 10))
+    expect(estimateLabelWidth('', 10)).toBe(0)
+  })
+
+  it('scales with the font size', () => {
+    expect(estimateLabelWidth('hello', 20)).toBeCloseTo(estimateLabelWidth('hello', 10) * 2, 10)
+  })
+
+  it('knows an m is not an i', () => {
+    // The whole reason not to multiply by a flat average: these differ by about
+    // a factor of three, and reserving the same room for both would either
+    // waste half the picture or put one label through another.
+    expect(estimateLabelWidth('mmmm', 10)).toBeGreaterThan(estimateLabelWidth('iiii', 10) * 2)
+  })
+
+  it('errs wide rather than narrow on a realistic label', () => {
+    // 10px system-ui renders "2026-08-02" at roughly 56px. Over-reserving looks
+    // airy; under-reserving is the bug this exists to prevent.
+    const estimate = estimateLabelWidth('2026-08-02', 10)
+
+    expect(estimate).toBeGreaterThan(50)
+    expect(estimate).toBeLessThan(75)
+  })
+})
+
+describe('room for the label', () => {
+  const withLabel = (label: string) =>
+    buildScene(graph([node({ id: 'n', kind: 'note', label, path: p('n.md') })])).nodes[0]
+
+  it('reserves width for the text, not just for the dot', () => {
+    const long = withLabel('measure the bundle')
+    const short = withLabel('a')
+
+    expect(long?.spreadX).toBeGreaterThan((long?.radius ?? 0) * 3)
+    expect(long?.spreadX).toBeGreaterThan(short?.spreadX ?? 0)
+  })
+
+  it('reserves height for a label that hangs below the node', () => {
+    const labelled = withLabel('anything')
+
+    expect(labelled?.spreadY).toBeGreaterThan((labelled?.radius ?? 0) + LABEL_GAP)
+  })
+
+  it('reserves nothing extra once the scene is too big to draw labels', () => {
+    const crowded = buildScene(
+      graph(
+        Array.from({ length: 12 }, (_, i) =>
+          node({ id: `n${i}`, kind: 'note', label: 'a fairly long name', path: p(`n${i}.md`) }),
+        ),
+      ),
+      { labelLimit: 5 },
+    )
+
+    expect(crowded.labelled).toBe(false)
+    for (const entry of crowded.nodes) {
+      expect(entry.short).toBe('')
+      // Down to the dot: nothing is drawn, so nothing needs keeping clear.
+      expect(entry.spreadX).toBeLessThan(entry.radius + 10)
+    }
+  })
+})
+
+describe('labels that would only repeat their neighbour', () => {
+  const daily = () =>
+    buildScene(
+      graph(
+        [
+          node({ id: 'day:2026-08-02', kind: 'day', label: '2026-08-02', day: '2026-08-02' }),
+          node({
+            id: 'note:journal/2026-08-02.md',
+            kind: 'note',
+            label: '2026-08-02',
+            path: p('journal/2026-08-02.md'),
+            day: '2026-08-02',
+          }),
+        ],
+        [{ from: 'note:journal/2026-08-02.md', to: 'day:2026-08-02', kind: 'day' }],
+      ),
+    )
+
+  it('draws a daily’s date once, on the day rather than on the file', () => {
+    // A daily produces two nodes with the same name a few pixels apart. Drawing
+    // both read as a rendering fault rather than as two different things.
+    const scene = daily()
+
+    expect(find(scene.nodes, 'day:2026-08-02').short).toBe('2026-08-02')
+    expect(find(scene.nodes, 'note:journal/2026-08-02.md').short).toBe('')
+  })
+
+  it('keeps the full name for the tooltip and the screen reader', () => {
+    const muted = find(daily().nodes, 'note:journal/2026-08-02.md')
+
+    expect(muted.label).toBe('2026-08-02')
+    expect(muted.description).toBe('Note journal/2026-08-02.md')
+  })
+
+  it('leaves two notes of the same name alone when nothing joins them', () => {
+    // Same label, no edge between them: they are genuinely two different things
+    // in two different places, and hiding either would be a lie.
+    const scene = buildScene(
+      graph([
+        node({ id: 'a', kind: 'note', label: 'roadmap', path: p('work/roadmap.md') }),
+        node({ id: 'b', kind: 'note', label: 'roadmap', path: p('home/roadmap.md') }),
+      ]),
+    )
+
+    expect(find(scene.nodes, 'a').short).toBe('roadmap')
+    expect(find(scene.nodes, 'b').short).toBe('roadmap')
+  })
+})
+
+/**
+ * The regression test for what a browser showed and no unit test had:
+ * at a realistic size the labels landed on top of each other and the middle of
+ * the picture read as a smudge. Everything above is a mechanism; this is the
+ * property those mechanisms exist to produce.
+ */
+describe('a settled journal graph', () => {
+  const journal = (dayCount = 2): Scene => {
+    const nodes: GraphNode[] = []
+    const edges: GraphEdge[] = []
+    const days = Array.from(
+      { length: dayCount },
+      (_, i) =>
+        `2026-${String(Math.floor(i / 28) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}`,
+    )
+    const tasks = [
+      'measure the bundle again after the graph lands',
+      'conflict dialog: keep mine vs keep theirs wording',
+      'the domain expires in November, renew it',
+      'ring the plumber about the leak',
+    ]
+
+    days.forEach((day, index) => {
+      const notePath = p(`journal/${day}.md`)
+      nodes.push(node({ id: `day:${day}`, kind: 'day', label: day, day }))
+      nodes.push(node({ id: `note:${day}`, kind: 'note', label: day, path: notePath, day }))
+      edges.push({ from: `note:${day}`, to: `day:${day}`, kind: 'day' })
+
+      for (let t = 0; t < 2; t += 1) {
+        const id = `todo:${day}:${t}`
+        const text = tasks[(index * 2 + t) % tasks.length] ?? 'something else'
+        nodes.push({ ...node({ id, kind: 'todo', label: text, path: notePath, day }), line: t + 3 })
+        edges.push({ from: `note:${day}`, to: id, kind: 'contains' })
+        edges.push({ from: id, to: `day:${day}`, kind: 'day' })
+      }
+
+      nodes.push({
+        ...node({
+          id: `rem:${day}`,
+          kind: 'reminder',
+          label: 'standup at half nine',
+          path: notePath,
+          day,
+        }),
+        line: 9,
+      })
+      edges.push({ from: `note:${day}`, to: `rem:${day}`, kind: 'contains' })
+    })
+
+    for (const name of [
+      'markdown',
+      'bundle size',
+      'tailscale',
+      'roadmap',
+      'plumbing',
+      'codemirror',
+    ]) {
+      nodes.push(node({ id: `note:${name}`, kind: 'note', label: name, path: p(`${name}.md`) }))
+      edges.push({ from: 'note:2026-08-01', to: `note:${name}`, kind: 'link' })
+    }
+
+    nodes.push(node({ id: 'missing:offline sync', kind: 'note', label: 'offline sync' }))
+    edges.push({ from: 'note:roadmap', to: 'missing:offline sync', kind: 'unresolved' })
+
+    return buildScene({ nodes, edges })
+  }
+
+  /**
+   * The rectangles the browser will actually draw, not the shape the simulation
+   * reasons about -- those differ at the corners, and it is the drawn ones that
+   * either read or do not.
+   */
+  const overlappingLabels = (scene: Scene): string[] => {
+    const layout = createLayout({
+      nodes: scene.nodes,
+      edges: scene.edges.map((edge) => ({
+        from: edge.source,
+        to: edge.target,
+        length: edge.length,
+        strength: edge.strength,
+      })),
+    })
+
+    while (!isSettled(layout)) step(layout)
+
+    const boxes = scene.nodes
+      .filter((entry) => entry.short !== '')
+      .map((entry) => {
+        const placed = layout.byId.get(entry.id)
+        if (placed === undefined) throw new Error(`no layout node for ${entry.id}`)
+        return {
+          label: entry.short,
+          x: placed.x,
+          y: placed.y + entry.radius + LABEL_GAP,
+          halfWidth: estimateLabelWidth(entry.short, LABEL_FONT_SIZE) / 2,
+          halfHeight: LABEL_FONT_SIZE / 2,
+        }
+      })
+
+    const overlaps: string[] = []
+    for (const [i, a] of boxes.entries()) {
+      for (const b of boxes.slice(i + 1)) {
+        if (
+          Math.abs(a.x - b.x) < a.halfWidth + b.halfWidth &&
+          Math.abs(a.y - b.y) < a.halfHeight + b.halfHeight
+        ) {
+          overlaps.push(`${a.label} over ${b.label}`)
+        }
+      }
+    }
+
+    return overlaps
+  }
+
+  it('leaves no two labels sitting on top of each other', () => {
+    expect(overlappingLabels(journal())).toEqual([])
+  })
+
+  it('keeps overlaps rare at a month, where a small graph is too easy to be a test', () => {
+    // Sixteen nodes clear with any one of the four measures in place, so that
+    // case cannot tell which is carrying the weight. A month cannot be cleared
+    // by any single one: with the separation force removed this goes from two
+    // overlaps to ten, which is what gives this assertion teeth.
+    const scene = journal(30)
+    const labels = scene.nodes.filter((entry) => entry.short !== '').length
+
+    expect(labels).toBeGreaterThan(100)
+    expect(overlappingLabels(scene).length).toBeLessThan(labels * 0.05)
+  })
+
+  it('keeps the widest label a small fraction of the whole picture', () => {
+    const scene = journal()
+    const layout = createLayout({
+      nodes: scene.nodes,
+      edges: scene.edges.map((edge) => ({
+        from: edge.source,
+        to: edge.target,
+        length: edge.length,
+      })),
+    })
+
+    while (!isSettled(layout)) step(layout)
+
+    const xs = layout.nodes.map((entry) => entry.x)
+    const spread = Math.max(...xs) - Math.min(...xs)
+    const widest = Math.max(
+      ...scene.nodes.map((entry) => estimateLabelWidth(entry.short, LABEL_FONT_SIZE)),
+    )
+
+    // It was a third of the width when this read as a smudge. A label is a name
+    // you glance at, not a column of text the graph has to be built around.
+    expect(widest / spread).toBeLessThan(0.3)
   })
 })
 

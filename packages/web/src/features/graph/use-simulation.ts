@@ -60,6 +60,8 @@ export function useSimulation(
   useEffect(() => {
     const layout = createLayout(
       {
+        // `spreadX`/`spreadY` ride along on the scene nodes: the simulation
+        // takes them as boxes to keep clear and never learns they are labels.
         nodes: scene.nodes,
         edges: scene.edges.map((edge) => ({
           from: edge.source,

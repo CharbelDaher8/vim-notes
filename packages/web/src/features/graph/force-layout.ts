@@ -52,6 +52,9 @@ export interface LayoutNode {
    * equally regardless, so this deliberately does not divide into acceleration.
    */
   charge: number
+  /** Half-extents of the box nothing else may overlap. See `separation`. */
+  spreadX: number
+  spreadY: number
 }
 
 export interface LayoutEdgeInput {
@@ -62,8 +65,21 @@ export interface LayoutEdgeInput {
   strength?: number
 }
 
+export interface LayoutNodeInput {
+  id: string
+  /**
+   * Half-extents of the box this node wants kept clear.
+   *
+   * Optional, and the simulation does not care what fills it. The caller knows
+   * it is a label; from in here it is just a rectangle nothing else may sit
+   * inside.
+   */
+  spreadX?: number
+  spreadY?: number
+}
+
 export interface LayoutInput {
-  nodes: readonly { id: string }[]
+  nodes: readonly LayoutNodeInput[]
   edges: readonly LayoutEdgeInput[]
 }
 
@@ -127,6 +143,27 @@ export interface LayoutOptions {
    */
   maxTicks: number
   /**
+   * How hard overlapping nodes shove each other out of the way.
+   *
+   * Repulsion alone cannot do this job. It is inverse-square and long-range, so
+   * it decides the overall spread of the picture but is easily beaten locally
+   * by a short spring -- which is exactly the case that matters, because a todo
+   * is pulled hard against the note containing it and its label is six times
+   * wider than either dot. Separation is short-range and stiff: it does nothing
+   * at all until two boxes actually touch.
+   */
+  separation: number
+  /**
+   * Node count above which separation is skipped.
+   *
+   * Above the label limit nothing carries text, so the boxes collapse to the
+   * dots themselves and repulsion already keeps those apart -- measured, a
+   * thousand-node layout settles with no pair closer than 14 units. Which makes
+   * this pass pure cost on exactly the graphs that can least afford an O(n^2)
+   * sweep.
+   */
+  separateBelow: number
+  /**
    * Barnes-Hut opening angle. 0 forces exact pairwise repulsion; larger is
    * faster and coarser. 0.8 is the usual compromise.
    */
@@ -154,6 +191,11 @@ export const DEFAULT_LAYOUT_OPTIONS: LayoutOptions = {
   settleSpeed: 0.04,
   settleSteps: 10,
   maxTicks: 900,
+  // Measured: 0.5 is where label collisions reach zero across a sixteen-node
+  // journal, a month and a busy three hundred. Above 0.5 nothing improves and
+  // nothing costs, so this sits just past the knee rather than on it.
+  separation: 0.6,
+  separateBelow: 400,
   theta: 0.8,
   exactBelow: 192,
 }
@@ -216,7 +258,8 @@ export function createLayout(
   const byId = new Map<string, LayoutNode>()
   const radius = seedRadius(input.nodes.length, options.springLength)
 
-  for (const { id } of input.nodes) {
+  for (const input_ of input.nodes) {
+    const id = input_.id
     // A duplicate id would get two nodes sharing one identity, and every edge
     // naming it would attach to whichever came first. Dropping the second is
     // the only reading that keeps the picture consistent with the data.
@@ -233,6 +276,8 @@ export function createLayout(
       ax: 0,
       ay: 0,
       charge: 1,
+      spreadX: input_.spreadX ?? 0,
+      spreadY: input_.spreadY ?? 0,
     }
 
     nodes.push(node)
@@ -403,6 +448,7 @@ function accumulate(layout: Layout): void {
   else approximateRepulsion(layout)
 
   applySprings(layout)
+  applySeparation(layout)
 
   // Every force scaled by the remaining heat, in one place at the end rather
   // than threaded through each of them. As the heat runs out the forces vanish,
@@ -428,6 +474,78 @@ function applySprings(layout: Layout): void {
     spring.a.ay += dy * pull
     spring.b.ax -= dx * pull
     spring.b.ay -= dy * pull
+  }
+}
+
+/**
+ * Keeps each node's box clear of every other node's box.
+ *
+ * Measured in a normalised space where both boxes become one shape, so the push
+ * comes out along a smooth gradient rather than along whichever axis happened
+ * to overlap least. Snapping to an axis is the usual way to separate rectangles
+ * and it jitters here: label boxes are six times wider than they are tall, so
+ * the cheaper direction is nearly always straight up, and nodes end up
+ * shuffling into columns and flipping between axes as they cross.
+ *
+ * That shape is a superellipse rather than an ellipse. An inscribed ellipse
+ * leaves the four corners of the box unprotected, which for something this wide
+ * and flat is most of its outline -- measured, it let a couple of labels
+ * overlap diagonally on a month of journal while reporting no overlap itself.
+ * Raising the exponent pulls the curve out towards the corners; 4 is close
+ * enough to a rectangle to fix that and still smooth enough not to chatter.
+ *
+ * The force is scaled back out to world units per axis on the way, which is
+ * what makes it push mostly sideways for wide boxes -- the direction where the
+ * room is actually needed.
+ */
+function applySeparation(layout: Layout): void {
+  const { separation, separateBelow } = layout.options
+  const nodes = layout.nodes
+  if (separation <= 0 || nodes.length > separateBelow) return
+
+  for (const [i, a] of nodes.entries()) {
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      const b = nodes[j]
+      if (b === undefined) continue
+
+      const reachX = a.spreadX + b.spreadX
+      const reachY = a.spreadY + b.spreadY
+      if (reachX <= 0 || reachY <= 0) continue
+
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+
+      // Cheap rejection first: most pairs in a settled graph are nowhere near
+      // each other, and this is the inner loop.
+      if (Math.abs(dx) >= reachX || Math.abs(dy) >= reachY) continue
+
+      const nx = dx / reachX
+      const ny = dy / reachY
+      // The superellipse norm: (nx^4 + ny^4)^(1/4), two square roots rather
+      // than a `Math.pow` because this is the inner loop.
+      const distance = Math.sqrt(Math.sqrt(nx ** 4 + ny ** 4))
+      if (distance >= 1) continue
+
+      if (distance < 1e-6) {
+        // Two boxes exactly concentric have no direction to part along. Taken
+        // from the ids so the tie-break is reproducible, like everywhere else.
+        const angle = ((hash(`${a.id} ${b.id}`) % 3600) / 3600) * TAU
+        a.ax -= Math.cos(angle) * separation * reachX
+        a.ay -= Math.sin(angle) * separation * reachY
+        b.ax += Math.cos(angle) * separation * reachX
+        b.ay += Math.sin(angle) * separation * reachY
+        continue
+      }
+
+      const push = (separation * (1 - distance)) / distance
+      const fx = nx * push * reachX
+      const fy = ny * push * reachY
+
+      a.ax -= fx
+      a.ay -= fy
+      b.ax += fx
+      b.ay += fy
+    }
   }
 }
 

@@ -39,6 +39,20 @@ function ids(count: number): { id: string }[] {
   return Array.from({ length: count }, (_, i) => ({ id: `n${i}` }))
 }
 
+/**
+ * How deep into each other's reserved boxes two nodes are, in the superellipse
+ * space the separation force works in. 1 is just touching; below 1 overlaps.
+ */
+function clearance(layout: Layout, a: string, b: string): number {
+  const first = at(layout, a)
+  const second = at(layout, b)
+
+  const nx = (second.x - first.x) / (first.spreadX + second.spreadX)
+  const ny = (second.y - first.y) / (first.spreadY + second.spreadY)
+
+  return Math.sqrt(Math.sqrt(nx ** 4 + ny ** 4))
+}
+
 describe('createLayout', () => {
   it('drops edges naming a node that is not in the graph', () => {
     const layout = createLayout({
@@ -245,6 +259,134 @@ describe('the forces', () => {
     runUntilSettled(layout)
 
     expect(apart(layout, 'note', 'todo')).toBeLessThan(apart(layout, 'note', 'far'))
+  })
+})
+
+/**
+ * The force that makes room for labels. A node's box is whatever the caller
+ * asked to be kept clear; from in here it is a rectangle and nothing more.
+ */
+describe('separation', () => {
+  const wide = (id: string) => ({ id, spreadX: 50, spreadY: 10 })
+
+  it('holds two nodes apart even when a short spring is pulling them together', () => {
+    // The case that broke the picture: a todo is pulled hard against the note
+    // containing it, and its label is several times wider than either dot.
+    const graph = {
+      nodes: [wide('note'), wide('todo')],
+      edges: [{ from: 'note', to: 'todo', length: 30, strength: 0.09 }],
+    }
+    const start = placed({ note: { x: 0, y: 0 }, todo: { x: 10, y: 0 } })
+
+    const held = createLayout(graph, { alphaDecay: 0 }, start)
+    const crushed = createLayout(graph, { alphaDecay: 0, separation: 0 }, start)
+    runUntilSettled(held)
+    runUntilSettled(crushed)
+
+    // Not a hard floor: a spring and a separation force settle wherever they
+    // balance, so a stiff enough edge will always squeeze the box somewhat.
+    // What has to be true is that the box mostly wins, because the spring's
+    // rest length was chosen for dots and the box is sized for words.
+    expect(clearance(held, 'note', 'todo')).toBeGreaterThan(0.85)
+    expect(clearance(crushed, 'note', 'todo')).toBeLessThan(0.6)
+  })
+
+  it('protects the corners of the box, not only its sides', () => {
+    // An inscribed ellipse reports no overlap here and leaves these two exactly
+    // where they are, which is what let labels cross diagonally.
+    const layout = createLayout(
+      { nodes: [wide('a'), wide('b')], edges: [] },
+      { repulsion: 0, gravity: 0, alphaDecay: 0 },
+      placed({ a: { x: 0, y: 0 }, b: { x: 85, y: 12 } }),
+    )
+
+    expect(Math.hypot(85 / 100, 12 / 20)).toBeGreaterThan(1)
+
+    runUntilSettled(layout)
+
+    expect(apart(layout, 'a', 'b')).toBeGreaterThan(90)
+  })
+
+  it('pushes sideways for a wide flat box, where the room is actually needed', () => {
+    const layout = createLayout(
+      { nodes: [wide('a'), wide('b')], edges: [] },
+      { repulsion: 0, gravity: 0, alphaDecay: 0 },
+      placed({ a: { x: 0, y: 0 }, b: { x: 4, y: 3 } }),
+    )
+
+    runUntilSettled(layout)
+
+    const dx = Math.abs(at(layout, 'a').x - at(layout, 'b').x)
+    const dy = Math.abs(at(layout, 'a').y - at(layout, 'b').y)
+
+    expect(dx).toBeGreaterThan(dy)
+  })
+
+  it('keeps every pair clear across a crowd, not just a chosen two', () => {
+    // Shaped like a day of a journal: one note with everything hanging off it,
+    // at the rest length and stiffness the scene actually uses for `contains`.
+    const graph = {
+      nodes: Array.from({ length: 40 }, (_, i) => wide(`n${i}`)),
+      edges: Array.from({ length: 39 }, (_, i) => ({
+        from: 'n0',
+        to: `n${i + 1}`,
+        length: 66,
+        strength: 0.09,
+      })),
+    }
+
+    const worstClearance = (layout: Layout) => {
+      let worst = Number.POSITIVE_INFINITY
+      for (const a of layout.nodes) {
+        for (const b of layout.nodes) {
+          if (a.id >= b.id) continue
+          worst = Math.min(worst, clearance(layout, a.id, b.id))
+        }
+      }
+      return worst
+    }
+
+    const held = createLayout(graph)
+    const crushed = createLayout(graph, { separation: 0 })
+    runUntilSettled(held)
+    runUntilSettled(crushed)
+
+    // Deliberately over-constrained, and the threshold says so: forty boxes a
+    // hundred wide cannot all sit at a rest length of 66 around one hub -- the
+    // circumference is not there. The layout spreads them as far as the springs
+    // allow and takes the rest as a squeeze, which is the right answer to an
+    // impossible instruction and the reason this is not 1.
+    //
+    // Annealing also freezes wherever the heat ran out, so this is "no
+    // meaningful overlap left" rather than a proof of none. The comparison is
+    // the part that matters: without the force, boxes sit inside each other.
+    expect(worstClearance(held)).toBeGreaterThan(0.75)
+    expect(worstClearance(held)).toBeGreaterThan(worstClearance(crushed) * 1.5)
+  })
+
+  it('does nothing at all for nodes that asked for no room', () => {
+    const bare = { nodes: ids(20), edges: [{ from: 'n0', to: 'n1' }] }
+
+    const withForce = createLayout(bare, { separation: 0.6 })
+    const without = createLayout(bare, { separation: 0 })
+    run(withForce, 40)
+    run(without, 40)
+
+    expect(layoutPositions(withForce)).toEqual(layoutPositions(without))
+  })
+
+  it('is skipped once there are more nodes than carry labels', () => {
+    const crowd = {
+      nodes: Array.from({ length: 30 }, (_, i) => wide(`n${i}`)),
+      edges: [],
+    }
+
+    const under = createLayout(crowd, { separateBelow: 100 })
+    const over = createLayout(crowd, { separateBelow: 10 })
+    run(under, 30)
+    run(over, 30)
+
+    expect(layoutPositions(over)).not.toEqual(layoutPositions(under))
   })
 })
 

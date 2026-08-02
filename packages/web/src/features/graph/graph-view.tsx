@@ -30,7 +30,15 @@ import {
 
 import { useWorkspaceStore } from '../../shared/workspace-store'
 import { layoutBounds, type Layout, type Vec } from './force-layout'
-import { buildScene, openTargetFor, type NodeShape, type SceneNode } from './graph-scene'
+import {
+  buildScene,
+  LABEL_FONT_SIZE,
+  LABEL_GAP,
+  MIN_LABEL_PIXELS,
+  openTargetFor,
+  type NodeShape,
+  type SceneNode,
+} from './graph-scene'
 import { useGraph, useGraphSync } from './use-graph'
 import { useSimulation } from './use-simulation'
 import {
@@ -77,6 +85,7 @@ export function GraphView({ className }: GraphViewProps) {
 
   const surfaceRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<SVGGElement>(null)
+  const nodesRef = useRef<SVGGElement>(null)
   const nodeRefs = useRef<(SVGGElement | null)[]>([])
   const edgeRefs = useRef<(SVGLineElement | null)[]>([])
 
@@ -105,6 +114,16 @@ export function GraphView({ className }: GraphViewProps) {
   const applyView = useCallback(() => {
     const view = viewRef.current
     worldRef.current?.setAttribute('transform', `translate(${view.x} ${view.y}) scale(${view.k})`)
+
+    // Written straight onto the element rather than held in state, for the same
+    // reason the transform is: this changes on every frame of a pinch, and a
+    // re-render per frame would reconcile every node in the graph.
+    const group = nodesRef.current
+    if (group === null) return
+
+    const mode =
+      LABEL_FONT_SIZE * view.k < MIN_LABEL_PIXELS ? 'off' : labelledRef.current ? 'on' : 'hover'
+    if (group.getAttribute('data-labels') !== mode) group.setAttribute('data-labels', mode)
   }, [])
 
   const setView = useCallback(
@@ -124,11 +143,19 @@ export function GraphView({ className }: GraphViewProps) {
     originRef.current = { x: rect.left, y: rect.top }
   }, [])
 
+  // Read by `applyView`, which runs outside React on every frame of a gesture
+  // and so cannot close over a render's value.
+  const labelledRef = useRef(scene.labelled)
+  labelledRef.current = scene.labelled
+
   useEffect(() => {
     nodeRefs.current.length = scene.nodes.length
     edgeRefs.current.length = scene.edges.length
     focusedRef.current = 0
-  }, [scene])
+    // A scene can cross the label limit without the view moving at all, and the
+    // label mode is derived from both.
+    applyView()
+  }, [applyView, scene])
 
   const draw = useCallback(
     (layout: Layout) => {
@@ -466,10 +493,12 @@ export function GraphView({ className }: GraphViewProps) {
             </g>
 
             <g
+              ref={nodesRef}
               className="graph__nodes"
               role="group"
               aria-label={`${scene.nodes.length} nodes`}
-              data-labelled={scene.labelled || undefined}
+              // `data-labels` is set by `applyView`, not here: it depends on the
+              // current zoom, which React deliberately never sees.
             >
               {scene.nodes.map((node, index) => (
                 <g
@@ -508,9 +537,13 @@ export function GraphView({ className }: GraphViewProps) {
                   <circle className="graph__ring" r={node.radius + 5} />
                   <NodeGlyph shape={node.shape} radius={node.radius} done={node.done} />
 
-                  <text className="graph__label" y={node.radius + 13}>
-                    {node.short}
-                  </text>
+                  {/* Empty when the scene is past the label limit, or when the
+                      text would only repeat the node next to it. */}
+                  {node.short === '' ? null : (
+                    <text className="graph__label" y={node.radius + LABEL_GAP}>
+                      {node.short}
+                    </text>
+                  )}
                 </g>
               ))}
             </g>

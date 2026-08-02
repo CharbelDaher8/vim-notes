@@ -2,11 +2,11 @@
  * `NoteGraph` turned into something drawable, without touching the DOM.
  *
  * Every decision the picture depends on is made here rather than in JSX: which
- * shape a kind gets, how big it is, how hard its edges pull, what a screen
- * reader is told, and what happens when the graph is bigger than a browser will
- * happily draw. That keeps the component down to "put these shapes at these
- * coordinates", and it means the interesting rules can be tested in a package
- * that has no jsdom.
+ * shape a kind gets, how big it is, how hard its edges pull, how much room its
+ * label needs, what a screen reader is told, and what happens when the graph is
+ * bigger than a browser will happily draw. That keeps the component down to
+ * "put these shapes at these coordinates", and it means the interesting rules
+ * can be tested in a package that has no jsdom.
  *
  * The shape vocabulary is deliberate. Colour is the obvious way to separate
  * four node kinds and the wrong one: roughly one man in twelve cannot tell the
@@ -31,7 +31,11 @@ export interface SceneNode {
   tone: NodeTone
   /** Full text, for the tooltip and the accessible name. */
   label: string
-  /** Shortened for drawing, because a long TODO would cover the graph. */
+  /**
+   * What to draw under the node, shortened to fit. Empty means draw nothing --
+   * either the whole scene is past the label limit, or this label would only
+   * repeat the one next to it.
+   */
   short: string
   path: NotePath | null
   /** Where an annotation sits in its note, so a click can open the right line. */
@@ -58,6 +62,16 @@ export interface SceneNode {
    */
   ambiguous: boolean
   radius: number
+  /**
+   * Half-extents of the box this node needs kept clear, label included.
+   *
+   * The layout uses these to hold nodes apart, which is the only thing that
+   * stops labels landing on top of each other. It has to live here rather than
+   * in the simulation because it depends on what the text says, and the
+   * simulation deliberately knows nothing about notes.
+   */
+  spreadX: number
+  spreadY: number
   degree: number
   /** What a screen reader says, and what the tooltip shows. */
   description: string
@@ -82,7 +96,7 @@ export interface Scene {
   omitted: number
   /** Edges dropped for naming a node that is not in the graph. */
   dangling: number
-  /** Whether every node can afford a permanent label. */
+  /** Whether the scene is small enough for every node to carry a label. */
   labelled: boolean
 }
 
@@ -104,8 +118,40 @@ export interface SceneOptions {
 export const DEFAULT_MAX_NODES = 1200
 export const DEFAULT_LABEL_LIMIT = 260
 
-/** Longest label drawn. Beyond this the text is wider than the graph is tall. */
-const MAX_LABEL = 26
+/**
+ * Label geometry, shared with the CSS and the JSX so the three cannot drift.
+ *
+ * The layout reserves space using these numbers; if the stylesheet disagreed
+ * about the font size, it would reserve the wrong amount and the labels would
+ * collide again with nothing in the model to explain why.
+ */
+export const LABEL_FONT_SIZE = 10
+export const LABEL_GAP = 13
+
+/**
+ * Below this many rendered pixels a label stops being a word and becomes grey
+ * texture, so it is not drawn at all.
+ *
+ * This is the one thing zooming genuinely fixes. Collisions do not resolve on
+ * zoom -- labels live inside the scaled group, so text and the gaps between
+ * nodes grow together and the overlap ratio never changes, which is why they
+ * have to be solved in the layout instead. Legibility is different: it depends
+ * on the scale alone, so zooming in really does bring the words back.
+ */
+export const MIN_LABEL_PIXELS = 7
+const LABEL_HEIGHT = 11
+/** Breathing room between neighbouring labels, so they touch rather than kiss. */
+const LABEL_MARGIN = 5
+
+/**
+ * Longest label drawn.
+ *
+ * Measured rather than chosen: at the previous 26 the widest label came out a
+ * third of the entire graph's width on a sixteen-node journal, which is what
+ * made the middle of the picture unreadable. A graph label is a name you scan,
+ * not text you read -- the tooltip and the note itself carry the rest.
+ */
+const MAX_LABEL = 18
 
 const SHAPES: Record<GraphNodeKind, NodeShape> = {
   note: 'circle',
@@ -119,14 +165,19 @@ const SHAPES: Record<GraphNodeKind, NodeShape> = {
  * structure without any colour being involved: an annotation sits tight against
  * the note that contains it, a day holds its notes a little further out, and a
  * wikilink is a long, loose connection between two things that stand alone.
+ *
+ * The absolute numbers are set against label width rather than against node
+ * radius. Nodes are about 12 units across and a label is about 80, so lengths
+ * tuned to the dots put the text of one node straight through the text of its
+ * neighbour.
  */
 const EDGE_FORCE: Record<GraphEdgeKind, { length: number; strength: number }> = {
-  contains: { length: 42, strength: 0.1 },
-  day: { length: 68, strength: 0.06 },
-  link: { length: 112, strength: 0.045 },
+  contains: { length: 66, strength: 0.09 },
+  day: { length: 104, strength: 0.055 },
+  link: { length: 158, strength: 0.04 },
   // Weakest and longest: a link to a note that does not exist should hang off
   // the edge of the picture rather than pull anything into the middle of it.
-  unresolved: { length: 96, strength: 0.028 },
+  unresolved: { length: 136, strength: 0.026 },
 }
 
 export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene {
@@ -153,6 +204,7 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
 
   const kept = selectNodes(sourceNodes, degree, maxNodes)
   const keptIds = new Set(kept.map((node) => node.id))
+  const labelled = kept.length <= labelLimit
 
   // Names that do have notes behind them. A wikilink target only fails to
   // resolve while a note of that name exists if there is more than one, because
@@ -166,42 +218,6 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
   for (const node of sourceNodes) {
     if (node.kind === 'note' && node.path !== null) namesWithNotes.add(node.label.toLowerCase())
   }
-
-  const nodes = kept.map((node): SceneNode => {
-    const links = degree.get(node.id) ?? 0
-    const done = node.done === true
-    // Two independent signals for the same fact, because either can be absent:
-    // the index may model a phantom target as a pathless note, and it may
-    // simply be the far end of an unresolved edge.
-    const missing = (node.kind === 'note' && node.path === null) || unresolvedTargets.has(node.id)
-    const ambiguous = missing && namesWithNotes.has(node.label.toLowerCase())
-
-    return {
-      id: node.id,
-      kind: node.kind,
-      shape: SHAPES[node.kind],
-      tone: toneFor(node.kind, done, missing),
-      label: node.label,
-      short: truncateLabel(node.label),
-      path: node.path,
-      line: node.line,
-      day: node.day,
-      done,
-      missing,
-      ambiguous,
-      radius: radiusFor(node.kind, links, missing),
-      degree: links,
-      description: describe({
-        kind: node.kind,
-        label: node.label,
-        path: node.path,
-        day: node.day,
-        done,
-        missing,
-        ambiguous,
-      }),
-    }
-  })
 
   const edges: SceneEdge[] = []
 
@@ -222,15 +238,137 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
     })
   }
 
+  const drawn = dedupeEdges(edges)
+  const muted = mutedLabels(kept, drawn)
+
+  const nodes = kept.map((node): SceneNode => {
+    const links = degree.get(node.id) ?? 0
+    const done = node.done === true
+    // Two independent signals for the same fact, because either can be absent:
+    // the index may model a phantom target as a pathless note, and it may
+    // simply be the far end of an unresolved edge.
+    const missing = (node.kind === 'note' && node.path === null) || unresolvedTargets.has(node.id)
+    const ambiguous = missing && namesWithNotes.has(node.label.toLowerCase())
+
+    const radius = radiusFor(node.kind, links, missing)
+    const short = labelled && !muted.has(node.id) ? truncateLabel(node.label) : ''
+    const labelWidth = short === '' ? 0 : estimateLabelWidth(short, LABEL_FONT_SIZE)
+
+    return {
+      id: node.id,
+      kind: node.kind,
+      shape: SHAPES[node.kind],
+      tone: toneFor(node.kind, done, missing),
+      label: node.label,
+      short,
+      path: node.path,
+      line: node.line,
+      day: node.day,
+      done,
+      missing,
+      ambiguous,
+      radius,
+      spreadX: Math.max(radius, labelWidth / 2) + LABEL_MARGIN,
+      // The label hangs below the node, so the real box is lopsided. Treating
+      // it as symmetric about the node costs a little vertical room and saves
+      // the simulation from caring which way up a node is.
+      spreadY: radius + (short === '' ? 0 : LABEL_GAP + LABEL_HEIGHT / 2) + LABEL_MARGIN,
+      degree: links,
+      description: describe({
+        kind: node.kind,
+        label: node.label,
+        path: node.path,
+        day: node.day,
+        done,
+        missing,
+        ambiguous,
+      }),
+    }
+  })
+
   return {
     nodes,
-    edges: dedupeEdges(edges),
+    edges: drawn,
     totalNodes: sourceNodes.length,
     omitted: sourceNodes.length - nodes.length,
     dangling,
-    labelled: nodes.length <= labelLimit,
+    labelled,
   }
 }
+
+/**
+ * Labels that would only repeat the one next to them.
+ *
+ * A daily produces two nodes with the same name -- the note that is the file
+ * and the day that is the date -- joined by a short edge, so every journal
+ * entry drew its date twice, a few pixels apart. That reads as a rendering
+ * fault rather than as two different things.
+ *
+ * The senior end keeps the text: a day is the structure a journal hangs off, a
+ * note outranks the tasks inside it, and equal ranks fall back to the id so the
+ * choice is the same on every rebuild.
+ */
+function mutedLabels(
+  nodes: readonly { id: string; kind: GraphNodeKind; label: string }[],
+  edges: readonly SceneEdge[],
+): Set<string> {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const muted = new Set<string>()
+
+  for (const edge of edges) {
+    const a = byId.get(edge.source)
+    const b = byId.get(edge.target)
+    if (a === undefined || b === undefined) continue
+    if (a.label !== b.label) continue
+
+    const junior =
+      labelRank(a.kind) === labelRank(b.kind)
+        ? a.id < b.id
+          ? b
+          : a
+        : labelRank(a.kind) < labelRank(b.kind)
+          ? b
+          : a
+    muted.add(junior.id)
+  }
+
+  return muted
+}
+
+function labelRank(kind: GraphNodeKind): number {
+  return kind === 'day' ? 0 : kind === 'note' ? 1 : 2
+}
+
+/**
+ * How wide a label will be, without a browser to ask.
+ *
+ * `getComputedTextLength` needs a laid-out document and this package has no
+ * jsdom, so the width is estimated from the characters. The weights are rough
+ * -- proportional fonts vary and the UI font is whatever the OS supplies -- but
+ * the alternative is treating every character as equally wide, which is wrong
+ * by a factor of three between `iiii` and `mmmm` and would reserve visibly the
+ * wrong amount of room for a date against a sentence.
+ *
+ * Erring wide is the safe direction: too much space merely looks airy, too
+ * little puts one label through another.
+ */
+export function estimateLabelWidth(text: string, fontSize: number): number {
+  let units = 0
+
+  for (const character of text) {
+    if (character === ' ') units += 0.27
+    else if (NARROW.has(character)) units += 0.31
+    else if (WIDE.has(character)) units += 0.85
+    else if (character >= 'A' && character <= 'Z') units += 0.64
+    else if (character >= '0' && character <= '9') units += 0.56
+    else units += 0.53
+  }
+
+  return units * fontSize
+}
+
+const NARROW = new Set([...`ijltfIJ.,;:'"\`!|()[]{}-`])
+const WIDE = new Set([...'mwMW@%'])
 
 /**
  * Which nodes survive the cap.
@@ -255,16 +393,12 @@ function selectNodes<T extends { id: string; kind: GraphNodeKind }>(
 
       // Days before notes before annotations: days are the spine of a journal,
       // and a spine with holes in it reads worse than missing leaves.
-      const byKind = kindRank(a.kind) - kindRank(b.kind)
+      const byKind = labelRank(a.kind) - labelRank(b.kind)
       if (byKind !== 0) return byKind
 
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
     })
     .slice(0, maxNodes)
-}
-
-function kindRank(kind: GraphNodeKind): number {
-  return kind === 'day' ? 0 : kind === 'note' ? 1 : 2
 }
 
 function dedupe<T extends { id: string }>(nodes: readonly T[]): T[] {
