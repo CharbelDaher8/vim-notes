@@ -56,6 +56,11 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # Off for the same reason as in ci.yml: setup-node v5 caches for the
+          # detected package manager by default, and resolving the pnpm store
+          # fails before corepack has provided pnpm. The expensive cache in this
+          # job is the Rust one below; node dependencies here are small.
+          package-manager-cache: false
 
       - name: Enable corepack
         run: corepack enable

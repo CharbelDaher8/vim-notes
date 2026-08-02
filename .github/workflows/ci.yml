@@ -35,6 +35,13 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # setup-node v5 turns package-manager caching on by default. It reads
+          # `packageManager` from package.json, sees pnpm, and then shells out
+          # to `pnpm store path` -- which fails, because corepack has not run
+          # yet and pnpm does not exist. Ordering cannot fix it either: corepack
+          # enable has to come after the node this job will actually use. So the
+          # built-in cache is off and the store is cached explicitly below.
+          package-manager-cache: false
 
       # pnpm comes from the `packageManager` field, so the version here always
       # matches the one the lockfile was written by.
