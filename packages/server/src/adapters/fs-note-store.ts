@@ -39,20 +39,32 @@ import {
   compareTreeEntries,
   NotFoundError,
   NoteStoreError,
-  PathEscapeError,
   PathOccupiedError,
 } from './note-store-common'
+import { resolveContained } from './path-containment'
+import type { WriteObserver } from './write-journal'
+
+export interface FsNoteStoreOptions {
+  /**
+   * Told about every change this store makes, so the file watcher can recognise
+   * the events it is about to see as ours rather than nvim's. Optional: the
+   * store is perfectly usable without a watcher attached.
+   */
+  observer?: WriteObserver
+}
 
 export class FsNoteStore implements NoteStore {
   private readonly root: string
+  private readonly observer: WriteObserver | undefined
 
-  constructor(rootDirectory: string) {
+  constructor(rootDirectory: string, options: FsNoteStoreOptions = {}) {
     if (!nodePath.isAbsolute(rootDirectory)) {
       throw new NoteStoreError(
         `notes root must be an absolute path, got ${JSON.stringify(rootDirectory)}`,
       )
     }
     this.root = nodePath.resolve(rootDirectory)
+    this.observer = options.observer
   }
 
   async tree(): Promise<TreeEntry[]> {
@@ -101,10 +113,7 @@ export class FsNoteStore implements NoteStore {
     await makeDirectory(directory, path)
 
     const bytes = Buffer.from(content, 'utf8')
-    const temporary = nodePath.join(
-      directory,
-      `.${nodePath.basename(absolute)}.${randomUUID()}.tmp`,
-    )
+    const temporary = nodePath.join(directory, temporaryFileName(nodePath.basename(absolute)))
     let renamed = false
 
     try {
@@ -132,11 +141,16 @@ export class FsNoteStore implements NoteStore {
       await fs.rename(temporary, absolute)
       renamed = true
 
+      const hash = hashContent(bytes)
+      // Claimed before returning, so the claim is already in place by the time
+      // the watcher gets round to the event this rename just produced.
+      this.observer?.recordContent(path, hash)
+
       return {
         ok: true,
         metadata: {
           path,
-          hash: hashContent(bytes),
+          hash,
           size: bytes.byteLength,
           modifiedAt: await modifiedAtOrNow(absolute),
         },
@@ -164,6 +178,11 @@ export class FsNoteStore implements NoteStore {
 
     await makeDirectory(nodePath.dirname(destination), to)
 
+    // A move has no content to claim with -- and for a directory it produces one
+    // event per note under it -- so both ends are claimed by subtree.
+    this.observer?.recordSubtree(from)
+    this.observer?.recordSubtree(to)
+
     // rename() overwrites its destination silently and there is no portable
     // no-clobber variant, so the check above is the whole guard. A file that
     // appears at `to` in the microseconds since would be overwritten.
@@ -176,6 +195,8 @@ export class FsNoteStore implements NoteStore {
     if ((await lstatOrNull(absolute)) === null) {
       throw new NotFoundError(`${path} does not exist`)
     }
+
+    this.observer?.recordSubtree(path)
 
     // `force` only covers the path vanishing between the check and here; the
     // "was never there" case is reported above rather than passed over.
@@ -195,37 +216,9 @@ export class FsNoteStore implements NoteStore {
     await makeDirectory(absolute, path)
   }
 
-  /**
-   * Absolute path for a note, proven to be inside the notes root.
-   *
-   * NotePath has already rejected `..`, absolute paths and backslashes, so the
-   * string check below should be unreachable -- which is the point of having it.
-   * The two checks fail on different attacks and neither subsumes the other:
-   *
-   *   - The string check catches a path that resolves outside the root. The
-   *     separator in `isInside` is load-bearing: without it `/notes` looks like
-   *     it contains `/notes-backup`.
-   *   - The realpath check catches a symlink *inside* the notes directory
-   *     pointing somewhere else. No amount of string validation can see that
-   *     one, and the notes directory is writable by nvim, so it is not a
-   *     hypothetical.
-   *
-   * The root is realpath'd too, because it very often is a symlink itself --
-   * `/tmp` on macOS, a bind-mounted volume in Docker.
-   */
+  /** Absolute path for a note, proven to be inside the notes root. */
   private async resolve(path: NotePath): Promise<string> {
-    const absolute = nodePath.resolve(this.root, path)
-    if (!isInside(this.root, absolute)) throw new PathEscapeError(`${path} escapes the notes root`)
-
-    const [realRoot, realTarget] = await Promise.all([
-      realpathOfNearestExisting(this.root),
-      realpathOfNearestExisting(absolute),
-    ])
-    if (!isInside(realRoot, realTarget)) {
-      throw new PathEscapeError(`${path} resolves outside the notes root via a symlink`)
-    }
-
-    return absolute
+    return resolveContained(this.root, path)
   }
 
   private async readDirectory(absolute: string, parent: NotePath | null): Promise<TreeEntry[]> {
@@ -288,6 +281,33 @@ export class FsNoteStore implements NoteStore {
 
     return entries.sort(compareTreeEntries)
   }
+}
+
+/**
+ * Name for the scratch file an atomic write renames from.
+ *
+ * Exported with its matcher because the file watcher has to recognise these and
+ * stay silent about them: every save would otherwise emit a spurious created +
+ * deleted pair for a file no client has ever heard of. Two independent guesses
+ * at the same naming scheme would drift, and the drift would be invisible until
+ * the tree started flickering.
+ *
+ * Leading dot to keep it out of the way, UUID so two concurrent writes to one
+ * note cannot collide, `.tmp` so it is obvious what it is when a crash leaves
+ * one behind.
+ */
+export function temporaryFileName(basename: string): string {
+  return `.${basename}.${randomUUID()}.tmp`
+}
+
+const TEMPORARY_NAME = /^\..+\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i
+
+/**
+ * Deliberately matches the UUID rather than just `*.tmp`: a note legitimately
+ * called `.draft.tmp` is a note, and hiding it from the tree would be a bug.
+ */
+export function isTemporaryFileName(name: string): boolean {
+  return TEMPORARY_NAME.test(name)
 }
 
 async function statResolved(absolute: string, path: NotePath): Promise<NoteMetadata | null> {
@@ -373,42 +393,6 @@ async function makeDirectory(absolute: string, path: NotePath): Promise<void> {
     }
     throw error
   }
-}
-
-/**
- * Realpath of `target`, resolving as far down as the filesystem actually goes.
- *
- * Containment has to be checked for paths that do not exist yet -- every create
- * is one -- so realpath the deepest existing ancestor and re-attach the missing
- * segments. Those segments are plain names from an already-validated NotePath,
- * so re-joining them cannot introduce a traversal.
- */
-async function realpathOfNearestExisting(target: string): Promise<string> {
-  const missing: string[] = []
-  let current = target
-
-  for (;;) {
-    try {
-      const real = await fs.realpath(current)
-      return missing.length === 0 ? real : nodePath.join(real, ...missing.reverse())
-    } catch (error) {
-      if (!isAbsent(error)) throw error
-
-      const parent = nodePath.dirname(current)
-      // Reached the filesystem root without finding anything, which cannot
-      // happen for a path under an existing root but would loop forever if it
-      // did.
-      if (parent === current) return target
-
-      missing.push(nodePath.basename(current))
-      current = parent
-    }
-  }
-}
-
-function isInside(root: string, candidate: string): boolean {
-  const prefix = root.endsWith(nodePath.sep) ? root : root + nodePath.sep
-  return candidate === root || candidate.startsWith(prefix)
 }
 
 /**
