@@ -4,6 +4,7 @@ import { AutoCommitter } from './adapters/auto-committer'
 import { ChokidarFileWatcher } from './adapters/chokidar-file-watcher'
 import { FsNoteStore } from './adapters/fs-note-store'
 import { GitVersionControl } from './adapters/git-version-control'
+import { MemoryNoteIndex } from './adapters/memory-note-index'
 import { NodePtyTerminalHost } from './adapters/node-pty-terminal-host'
 import { RipgrepSearch } from './adapters/ripgrep-search'
 import { WriteJournal } from './adapters/write-journal'
@@ -59,6 +60,12 @@ export async function createApplication(config: Config): Promise<Application> {
     onError: onError('watcher'),
   })
 
+  // Built after the watcher exists and before anything can query it, so the
+  // first request does not race the initial walk. `start` waits for that walk;
+  // the constructor alone would return an index that answers "no todos"
+  // confidently while it is still reading the notes.
+  const index = await MemoryNoteIndex.start(notes, watcher, { onError: onError('note-index') })
+
   const terminals = new NodePtyTerminalHost({
     notesRoot: config.NOTES_ROOT,
     command: config.TERMINAL_COMMAND,
@@ -83,7 +90,7 @@ export async function createApplication(config: Config): Promise<Application> {
   })
 
   return {
-    context: { notes, vcs, search, watcher, terminals },
+    context: { notes, vcs, search, watcher, terminals, index },
     terminals,
 
     shutdown: async () => {
@@ -91,6 +98,7 @@ export async function createApplication(config: Config): Promise<Application> {
       // then tear down the ptys -- flushing after killing nvim would lose the
       // last save, which is exactly the moment it matters most.
       unsubscribeAutoCommit()
+      index.close()
       await watcher.close()
       await autoCommitter.stop()
       await terminals.killAll()

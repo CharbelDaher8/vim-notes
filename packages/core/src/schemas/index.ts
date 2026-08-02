@@ -9,6 +9,7 @@
 import { z } from 'zod'
 
 import { asContentHash, type ContentHash } from '../domain/conflict'
+import { parseIsoDate, type AnnotationKind } from '../domain/note-markup'
 import { describeNotePathError, parseNotePath, type NotePath } from '../domain/note-path'
 
 export const notePathSchema = z
@@ -77,6 +78,49 @@ export const spawnTerminalInput = z.object({
   rows: z.number().int().min(1).max(1000),
 })
 
+/**
+ * Kept in step with the domain type by `satisfies` rather than by hope: renaming
+ * a kind in note-markup.ts becomes a compile error here instead of an API that
+ * silently rejects every value of the renamed kind.
+ */
+const ANNOTATION_KINDS = ['todo', 'reminder'] as const satisfies readonly AnnotationKind[]
+
+export const annotationKindSchema = z.enum(ANNOTATION_KINDS)
+
+/**
+ * A calendar day, `YYYY-MM-DD`.
+ *
+ * Compared against the whole string rather than merely scanned: `parseIsoDate`
+ * finds a date anywhere in its input, which is what a task line needs and the
+ * opposite of what a filter needs. It also rejects `2026-02-31`, which matches
+ * the pattern and is not a day -- a filter for it would otherwise return
+ * nothing forever and look like missing data.
+ */
+export const isoDaySchema = z
+  .string()
+  .refine((value) => parseIsoDate(value) === value, 'expected a calendar day as YYYY-MM-DD')
+
+export const annotationsInput = z.object({
+  kind: annotationKindSchema.optional(),
+  /** Omit for everything; false hides ticked items. See the NoteIndex port. */
+  includeDone: z.boolean().optional(),
+  day: isoDaySchema.optional(),
+  /**
+   * Optional, as on the port. Records come back newest day first, so a client
+   * asking for a panelful gets the useful end of the list rather than whatever
+   * the walk happened to reach first.
+   */
+  limit: z.number().int().min(1).max(1000).optional(),
+})
+
+export const backlinksInput = z.object({
+  path: notePathSchema,
+})
+
+export const outboundLinksInput = z.object({
+  path: notePathSchema,
+})
+
 export type ReadNoteInput = z.infer<typeof readNoteInput>
 export type WriteNoteInput = z.infer<typeof writeNoteInput>
 export type MoveNoteInput = z.infer<typeof moveNoteInput>
@@ -86,6 +130,9 @@ export type SearchQueryInput = z.infer<typeof searchQueryInput>
 export type HistoryInput = z.infer<typeof historyInput>
 export type RestoreInput = z.infer<typeof restoreInput>
 export type SpawnTerminalInput = z.infer<typeof spawnTerminalInput>
+export type AnnotationsInput = z.infer<typeof annotationsInput>
+export type BacklinksInput = z.infer<typeof backlinksInput>
+export type OutboundLinksInput = z.infer<typeof outboundLinksInput>
 
 /** Convenience for call sites that have a plain string and want a NotePath. */
 export function toNotePath(value: string): NotePath {

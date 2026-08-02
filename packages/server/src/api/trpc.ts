@@ -1,4 +1,11 @@
-import type { FileWatcher, NoteStore, Search, TerminalHost, VersionControl } from '@vim-notes/core'
+import type {
+  FileWatcher,
+  NoteIndex,
+  NoteStore,
+  Search,
+  TerminalHost,
+  VersionControl,
+} from '@vim-notes/core'
 import {
   NotFoundError,
   PathEscapeError,
@@ -22,6 +29,8 @@ export interface AppContext {
   search: Search
   watcher: FileWatcher
   terminals: TerminalHost
+  /** Todos, reminders and links, all derived from the notes and owning nothing. */
+  index: NoteIndex
 }
 
 const t = initTRPC.context<AppContext>().create()
