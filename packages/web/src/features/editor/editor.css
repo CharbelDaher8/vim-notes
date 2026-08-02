@@ -1,0 +1,402 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface);
+}
+
+.editor__surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor__host {
+  height: 100%;
+}
+
+.editor__host .cm-editor {
+  height: 100%;
+}
+
+.editor__blank {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.25rem;
+  padding: 2rem;
+  background: var(--surface);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.editor__blank-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+
+.editor__blank p {
+  margin: 0;
+}
+
+/* --- Markdown ------------------------------------------------------------- */
+
+.cm-md-heading {
+  font-weight: 650;
+  letter-spacing: -0.012em;
+}
+
+.cm-md-h1 {
+  font-size: 1.5em;
+}
+.cm-md-h2 {
+  font-size: 1.28em;
+}
+.cm-md-h3 {
+  font-size: 1.12em;
+}
+.cm-md-h4,
+.cm-md-h5,
+.cm-md-h6 {
+  color: var(--text-muted);
+}
+
+.cm-md-quote {
+  /* Inset rather than a border so the line box, and therefore the cursor
+     position, is unchanged by the decoration. */
+  box-shadow: inset 3px 0 var(--border-strong);
+  color: var(--md-quote);
+  font-style: italic;
+}
+
+.cm-md-rule {
+  color: var(--md-punct);
+}
+
+.cm-md-fence,
+.cm-md-code-line {
+  background: var(--md-code-bg);
+}
+
+.cm-md-fence {
+  color: var(--md-punct);
+}
+
+.cm-md-task-done {
+  color: var(--text-faint);
+}
+
+.cm-md-punct {
+  color: var(--md-punct);
+}
+
+.cm-md-marker {
+  color: var(--accent);
+}
+
+.cm-md-strong {
+  font-weight: 680;
+}
+
+.cm-md-em {
+  font-style: italic;
+}
+
+.cm-md-strike {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.cm-md-code {
+  border-radius: 3px;
+  background: var(--md-code-bg);
+  color: var(--md-code);
+}
+
+.cm-md-link {
+  color: var(--md-link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--md-link) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+.cm-md-url {
+  color: var(--text-faint);
+}
+
+/* --- Banner --------------------------------------------------------------- */
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.6rem clamp(0.75rem, 4vw, 1.25rem);
+  border-bottom: 1px solid var(--border);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.banner[data-tone='danger'] {
+  background: var(--danger-soft);
+}
+
+.banner > svg {
+  flex: none;
+  color: var(--warn);
+}
+
+.banner[data-tone='danger'] > svg {
+  color: var(--danger);
+}
+
+.banner__text {
+  flex: 1 1 14rem;
+  margin: 0;
+}
+
+.banner__actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.banner__actions .button {
+  min-height: 2rem;
+}
+
+/* --- Markup bar ----------------------------------------------------------- */
+
+.markup-bar {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.3rem clamp(0.5rem, 3vw, 1rem);
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.markup-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.markup-bar__key {
+  flex: 1 0 auto;
+  min-width: 2.6rem;
+  min-height: 2.4rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.markup-bar__key:active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* --- Status --------------------------------------------------------------- */
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 1.9rem;
+  padding: 0 clamp(0.75rem, 4vw, 1.25rem);
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  /* Anything longer than the width available is the state, and the state is
+     the part worth keeping. */
+  white-space: nowrap;
+}
+
+.status__state {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status__state[data-state='dirty'] {
+  color: var(--warn);
+}
+
+.status__state[data-state='saving'] {
+  font-style: italic;
+}
+
+.status__state[data-state='error'],
+.status__state[data-state='conflict'],
+.status__state[data-state='missing'] {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.status__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.status__meta {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.status__mode {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+/* Every row of chrome is a row of note you cannot see. With the keyboard up on
+   a phone, the status line goes. */
+:root[data-keyboard='open'] .status {
+  display: none;
+}
+
+/* --- Conflict dialog ------------------------------------------------------ */
+
+.conflict__path {
+  display: block;
+  margin-top: 0.4rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.conflict__choices {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conflict__choices li {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.conflict__choices strong {
+  font-size: var(--text-sm);
+}
+
+.conflict__choices span {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* --- Diff ----------------------------------------------------------------- */
+
+.diff {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.diff__legend {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.diff__key {
+  display: inline-grid;
+  place-items: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.diff__key--removed {
+  background: var(--removed-soft);
+  color: var(--removed);
+}
+
+.diff__key--added {
+  margin-left: 0.6rem;
+  background: var(--added-soft);
+  color: var(--added);
+}
+
+.diff__summary {
+  margin-left: auto;
+}
+
+.diff__body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.diff__row {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 0.5rem;
+  white-space: pre;
+}
+
+.diff__row[data-kind='removed'] {
+  background: var(--removed-soft);
+}
+
+.diff__row[data-kind='added'] {
+  background: var(--added-soft);
+}
+
+.diff__gutter {
+  flex: none;
+  width: 1ch;
+  color: var(--text-faint);
+}
+
+.diff__row[data-kind='removed'] .diff__gutter {
+  color: var(--removed);
+}
+
+.diff__row[data-kind='added'] .diff__gutter {
+  color: var(--added);
+}
+
+.diff__text {
+  flex: 1;
+}
+
+.diff__gap {
+  padding: 0.15rem 0.5rem;
+  border-block: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+}

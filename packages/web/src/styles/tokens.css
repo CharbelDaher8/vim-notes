@@ -1,0 +1,103 @@
+/*
+ * One palette, expressed once.
+ *
+ * Every colour is a `light-dark()` pair and the scheme is chosen by
+ * `color-scheme`, so the manual override is a single attribute on <html> and
+ * there is no second copy of the palette to keep in step. The alternative --
+ * duplicating the whole list under a media query and again under an attribute
+ * selector -- drifts the first time someone tunes one value.
+ *
+ * The light side is warm paper rather than white: this is a surface someone
+ * reads prose on for an hour at a time, and pure #fff at full brightness is
+ * genuinely tiring.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --surface: light-dark(#fbfaf7, #16171a);
+  --surface-sunken: light-dark(#f2efe8, #101114);
+  --surface-raised: light-dark(#ffffff, #1d1f23);
+  --surface-hover: light-dark(#0000000a, #ffffff0d);
+  --surface-active: light-dark(#00000014, #ffffff17);
+  --backdrop: light-dark(#3c372ea6, #08090bcc);
+
+  --border: light-dark(#e6e1d6, #292c32);
+  --border-strong: light-dark(#d2cabb, #3a3f47);
+
+  --text: light-dark(#22201d, #e7e3db);
+  --text-muted: light-dark(#6d675f, #9b968d);
+  --text-faint: light-dark(#9a938a, #6c6860);
+
+  --accent: light-dark(#1c7a68, #5fc0a9);
+  --accent-strong: light-dark(#166053, #7ad0bb);
+  --accent-soft: light-dark(#dcece8, #17322c);
+  --accent-contrast: light-dark(#ffffff, #0d1614);
+
+  --danger: light-dark(#a53b2b, #e28270);
+  --danger-soft: light-dark(#f7e4df, #341d19);
+  --warn: light-dark(#8a6415, #dfae54);
+  --warn-soft: light-dark(#f7edd6, #33270f);
+  --added: light-dark(#1f6f45, #6cc48d);
+  --added-soft: light-dark(#e2f1e6, #14291d);
+  --removed: light-dark(#a53b2b, #e28270);
+  --removed-soft: light-dark(#f7e4df, #2e1a17);
+
+  /* Markdown. The heading colour is the text colour on purpose -- weight and
+     size already carry the hierarchy, and a second signal makes notes shout. */
+  --md-punct: light-dark(#b3aca0, #5d5a53);
+  --md-code: light-dark(#8f4225, #e0a175);
+  --md-code-bg: light-dark(#f0ece2, #24262b);
+  --md-link: var(--accent);
+  --md-quote: light-dark(#6d675f, #9b968d);
+  --md-rule: var(--border-strong);
+
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, 'JetBrains Mono', 'Cascadia Mono', Menlo, Consolas,
+    monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+
+  --editor-font-size: 16px;
+  --editor-line-height: 1.65;
+  --editor-measure: 76ch;
+
+  --radius-sm: 6px;
+  --radius-lg: 12px;
+
+  --shadow-sm: 0 1px 2px light-dark(#2b261e14, #00000059);
+  --shadow-lg: 0 12px 40px light-dark(#2b261e26, #00000073);
+
+  --motion-fast: 120ms ease;
+  --motion-panel: 220ms cubic-bezier(0.32, 0.72, 0, 1);
+
+  --sidebar-width: 17rem;
+  --header-height: 3rem;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* A phone in landscape has room for a real sidebar; a phone in portrait does
+   not. The breakpoint is about width, not about "mobile". */
+@media (min-width: 52rem) {
+  :root {
+    --editor-font-size: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 1ms linear;
+    --motion-panel: 1ms linear;
+  }
+}

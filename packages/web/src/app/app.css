@@ -1,0 +1,232 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  /* visualViewport, not vh: the keyboard covers the layout viewport rather
+     than shrinking it on iOS. See use-visual-viewport.ts. */
+  height: var(--viewport-height, 100dvh);
+  overflow: hidden;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex: none;
+  height: var(--header-height);
+  padding-inline: 0.35rem 0.35rem;
+  padding-inline-start: max(0.35rem, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+
+/* The directory gives way, the filename never does -- on a phone the path is
+   usually wider than the header and the last segment is the part you need. */
+.app__title {
+  display: flex;
+  align-items: baseline;
+  flex: 1;
+  min-width: 0;
+  margin: 0 0.35rem;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.app__crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app__file {
+  flex: none;
+}
+
+.app__brand {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
+}
+
+.app__crumb {
+  color: var(--text-faint);
+}
+
+.app__file {
+  color: var(--text);
+}
+
+.app__body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.app__main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* --- Sidebar -------------------------------------------------------------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--sidebar-width);
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+
+.sidebar__tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.35rem 0.35rem 0;
+}
+
+.sidebar__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 2rem;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.sidebar__tab:hover {
+  background: var(--surface-hover);
+}
+
+.sidebar__tab[aria-pressed='true'] {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.sidebar__close {
+  display: none;
+  margin-left: auto;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.sidebar__panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.app__scrim {
+  display: none;
+}
+
+.app__drawer-toggle {
+  display: none;
+}
+
+/* --- Dev tools ------------------------------------------------------------ */
+
+.devtools {
+  position: relative;
+}
+
+.devtools__trigger {
+  padding: 0.2rem 0.45rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.devtools__menu {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 13rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.devtools__menu button {
+  padding: 0.45rem 0.55rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.devtools__menu button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.devtools__menu button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* --- Narrow screens ------------------------------------------------------- */
+
+@media (max-width: 51.999rem) {
+  .app__drawer-toggle,
+  .sidebar__close {
+    display: inline-flex;
+  }
+
+  .sidebar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 15;
+    width: min(20rem, 86vw);
+    padding-left: env(safe-area-inset-left);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-102%);
+    visibility: hidden;
+    transition:
+      transform var(--motion-panel),
+      visibility var(--motion-panel);
+  }
+
+  .sidebar[data-open] {
+    transform: none;
+    visibility: visible;
+  }
+
+  .app__scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: block;
+    background: var(--backdrop);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity var(--motion-panel),
+      visibility var(--motion-panel);
+  }
+
+  .app__scrim[data-visible] {
+    opacity: 1;
+    visibility: visible;
+  }
+}

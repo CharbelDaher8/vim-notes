@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover for the notch; zoom deliberately left enabled, since
+         disabling it is an accessibility problem and the editor already uses a
+         16px base font so iOS does not zoom on focus. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <title>vim-notes</title>
+    <meta name="description" content="Markdown notes in a git repo, reachable from anywhere." />
+
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="color-scheme" content="light dark" />
+
+    <script>
+      // Before first paint, so a manual dark preference never flashes light.
+      // The app writes the same attribute; this only front-runs it.
+      try {
+        var stored = localStorage.getItem('vim-notes:theme')
+        if (stored === 'light' || stored === 'dark') {
+          document.documentElement.setAttribute('data-theme', stored)
+        }
+      } catch (error) {
+        // Private browsing. The system preference still applies.
+      }
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
