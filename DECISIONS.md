@@ -139,6 +139,29 @@ filesystem), CQRS, domain events (nothing would subscribe), and any DI container
 outward-pointing imports inside `packages/core`, so the boundary is a build
 failure rather than a code-review convention.
 
+**The cost, which is structural rather than incidental:** the composition root
+is the highest-risk file here and the one the test suite cannot reach. That
+follows directly from the property that makes the rest of it testable — feature
+code is built not to know what it is wired to, so every test runs against a
+fake, and the line that chooses the real implementation is by definition the
+line no test observes. The components on either side of a bad wire are both
+correct, both covered, and connected to nothing.
+
+This build produced five of them. Two are worth naming because they were
+invisible in exactly this way: `main.tsx` constructed `InMemoryPlatform`, so the
+whole web client ran against a fake with a fully tested `WebPlatform` sitting
+unused beside it; and `withGlobalTauri` was left unset, so the desktop build
+reported itself as a browser, fell back to the browser host, and never rendered
+the only screen that could tell it where its server was. Every one was one line.
+
+**Mitigation, such as it is:** start the thing and look at it. There is no
+cleverer answer — an integration test broad enough to catch this is a second
+composition root with its own wiring to get wrong. What does help is making the
+wiring say what it assumes: preflight logs the resolved path of every binary and
+the actual remote URL at boot, and the client reports which origin it resolved
+and where from. Every one of the five was found by running it and reading the
+first ten lines of output.
+
 ## 7. `NotePath` hand-rolls its path logic
 
 `packages/core/src/domain/note-path.ts` does not use `node:path`.
