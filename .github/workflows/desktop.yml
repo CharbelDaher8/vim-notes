@@ -4,6 +4,13 @@ name: desktop
 # on three runners and takes tens of minutes; the shell changes rarely, and the
 # things that break it (Rust, tauri.conf.json, the icon step) all live under
 # packages/desktop.
+#
+# Note the asymmetry: `paths` is deliberately NOT set on the push trigger.
+# GitHub applies a push `paths` filter to every ref in that event, tags
+# included, so adding one here would mean a `v*` release tag whose commit did
+# not happen to touch packages/desktop silently produces no artifacts. Tag
+# pushes are rare enough that building them unconditionally is the cheaper
+# mistake.
 on:
   workflow_dispatch:
   push:
