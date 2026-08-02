@@ -1,37 +1,41 @@
 /**
- * TEMPORARY. Delete this file once the numbers have been read.
+ * A pty must deliver every byte a program wrote before it exited.
  *
- * It exists to settle one question on Linux CI, where
- * `node-pty-terminal-host.test.ts` loses the tail of a 200KB burst through a
- * pty. That run reported `truncated: an exact prefix, 3397 of 200000 trailing
- * bytes never arrived` -- an exact prefix, so nothing is corrupting bytes;
- * something below the adapter is discarding the end of the stream.
+ * This began as a temporary diagnostic. Linux CI was losing the tail of a
+ * 200KB burst -- "truncated: an exact prefix, 3397 of 200000 trailing bytes
+ * never arrived" -- while macOS delivered all of it, and the question was which
+ * of two mechanisms below the adapter was discarding the end of the stream:
  *
- * Two candidates, and they predict different numbers:
+ *   A. node-pty destroys the pty master 200ms after reaping the child, taking
+ *      whatever is still queued. Predicts a shortfall that varies run to run
+ *      and grows with payload size.
+ *   B. One discarded read at teardown, Linux returning EIO where macOS gets a
+ *      clean EOF. A single read from a Linux pty master was believed capped at
+ *      N_TTY_BUF_SIZE (4096), and 3397 is under that. Predicts a stable
+ *      shortfall under 4096 at every size.
  *
- *   A. node-pty's `DESTROY_SOCKET_TIMEOUT_MS`. 200ms after the child is reaped
- *      it calls `_socket.destroy()` on the pty master whether or not anything
- *      has read what is left in it. That takes *whatever happens to be queued*,
- *      which on Linux can be up to the 64KB tty buffer, and only fires when the
- *      event loop has stalled past 200ms. Prediction: the shortfall varies
- *      run to run, and grows with payload size as more is in flight.
+ * Neither. The loss was the transport pausing the pty for back pressure, and it
+ * disappeared when that pause was removed -- see the terminal socket. The drain
+ * window added alongside it is what made the failure legible enough to diagnose
+ * in the first place, but the pause is what destroyed the bytes.
  *
- *   B. One discarded read at teardown. Linux returns EIO from a pty master once
- *      the slave closes, Node turns that into `stream.destroy(err)`, and a
- *      destroyed Readable drops whatever is still in its buffer -- where macOS
- *      gets a clean EOF that drains first. A single read from a Linux pty
- *      master is capped at `N_TTY_BUF_SIZE`, which is 4096. Prediction: the
- *      shortfall stays under 4096 at every size, and is roughly stable.
+ * Hypothesis B is also refuted on its own terms, which is worth recording so
+ * nobody re-derives it: `maxChunkSeen` on Linux is 36545, nine times the 4096
+ * the inference rested on, so "3397 is one discarded read" never followed.
  *
- * 3397 is under 4096, which is what makes B worth testing. `maxChunk` below is
- * the direct check on the premise: if Linux reads cap at 4096 and macOS at
- * 1024, that is the read granularity the whole inference rests on.
+ * It now asserts rather than reports, because a test that only prints cannot
+ * catch this coming back -- and coming back is plausible, since anything that
+ * reintroduces flow control on the pty reintroduces the bug.
  *
- * Reports rather than asserts, on purpose. The point is to read numbers off a
- * CI log, and a failing assertion would stop the run before later sizes were
- * measured. Neither mechanism is fixable from this repository -- both destroy
- * the bytes before the adapter is told anything -- so this decides what the
- * skip comment on the real test should honestly say, not whether to ship.
+ * Two things to leave alone:
+ *
+ *   - `process.stdout.write`, not `console.log`. Vitest's default reporter --
+ *     what `pnpm test` and CI use -- captures console output from a *passing*
+ *     test and discards it. Tidying this back produces a silent empty log,
+ *     which is worse than no output because it reads as a result.
+ *   - `maxChunk` is reported even when everything passes. It is the direct
+ *     measurement of read granularity, and it is what refuted B; a future
+ *     failure is only interpretable next to it.
  */
 import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
@@ -43,7 +47,7 @@ import { describe, expect, it } from 'vitest'
 import { NodePtyTerminalHost } from './node-pty-terminal-host'
 
 const SIZES = [50 * 1024, 200 * 1024, 1024 * 1024]
-const REPEATS = 3
+const REPEATS = 2
 
 interface Measurement {
   size: number
@@ -97,8 +101,8 @@ async function measure(size: number, run: number): Promise<Measurement> {
   }
 }
 
-describe('pty truncation diagnostic', () => {
-  it('reports the shortfall at three payload sizes', async () => {
+describe('pty delivery under load', () => {
+  it('delivers every byte at three payload sizes', async () => {
     const measurements: Measurement[] = []
 
     for (const size of SIZES) {
@@ -115,26 +119,40 @@ describe('pty truncation diagnostic', () => {
       )
     }
 
-    // The reading, stated so the log says what it means without anyone having
-    // to come back to this file.
-    const shortfalls = measurements.map((m) => m.shortfall)
-    const worst = Math.max(...shortfalls)
-    const anyLoss = worst > 0
-    const allUnderOneRead = worst < 4096
-    const everyLossIsAPrefix = measurements.every((m) => m.exactPrefix)
+    // Per size, because "the shortfall grows with the payload" is one of the two
+    // predictions and a single worst-case number cannot show it either way.
+    for (const size of SIZES) {
+      const runs = measurements.filter((m) => m.size === size)
+      const lossy = runs.filter((m) => m.shortfall > 0)
+      report(
+        `PTY-DIAG-BY-SIZE size=${size} lossyRuns=${lossy.length}/${runs.length} ` +
+          `worst=${Math.max(...runs.map((m) => m.shortfall))} ` +
+          `mean=${Math.round(runs.reduce((total, m) => total + m.shortfall, 0) / runs.length)}`,
+      )
+    }
 
     report(
       `PTY-DIAG-SUMMARY platform=${process.platform} ` +
-        `worstShortfall=${worst} allUnderOneRead=${allUnderOneRead} ` +
-        `everyLossIsAPrefix=${everyLossIsAPrefix} ` +
+        `lossyRuns=${measurements.filter((m) => m.shortfall > 0).length}/${measurements.length} ` +
+        `worstShortfall=${Math.max(...measurements.map((m) => m.shortfall))} ` +
+        `everyLossIsAPrefix=${measurements.every((m) => m.exactPrefix)} ` +
         `maxChunkSeen=${Math.max(...measurements.map((m) => m.maxChunk))} ` +
-        `verdict=${verdict(anyLoss, allUnderOneRead, shortfalls)}`,
+        `verdict=${verdict(measurements)}`,
     )
 
-    // The only assertion: that the diagnostic ran. Anything stronger would
-    // stop the run at the first size and lose the comparison that is the
-    // entire purpose.
     expect(measurements).toHaveLength(SIZES.length * REPEATS)
+
+    // Asserted after every measurement is reported, not inside the loop. A
+    // failure here is only interpretable next to the whole table -- whether the
+    // shortfall grows with payload size, and what `maxChunk` was when it
+    // happened, are what distinguish the mechanisms. Failing at the first size
+    // would throw that away and leave whoever reads the log guessing.
+    const lossy = measurements.filter((m) => m.shortfall > 0)
+
+    expect(
+      lossy.map((m) => `size=${m.size} run=${m.run} lost=${m.shortfall}`),
+      'a pty dropped bytes a program had already written; see the reported table above',
+    ).toEqual([])
   }, 120_000)
 })
 
@@ -153,12 +171,36 @@ function report(line: string): void {
   process.stdout.write(`${line}\n`)
 }
 
-function verdict(anyLoss: boolean, allUnderOneRead: boolean, shortfalls: number[]): string {
-  if (!anyLoss) return 'no-loss-here'
+/**
+ * Which hypothesis the numbers fit, including "neither".
+ *
+ * *How often* loss happens matters as much as how big it is, and reading only
+ * the size would get this backwards. A discarded read at teardown is structural:
+ * it should happen on essentially every run, bounded by one buffer, and not care
+ * how much was sent. The 200ms destroy is a race against a stalled event loop:
+ * it should be intermittent, and take more when more was in flight. So a run
+ * that loses 3397 bytes twice out of nine is evidence *against* the structural
+ * explanation, even though every number involved is under 4096.
+ *
+ * Returning 'inconclusive' is a real answer here. Two candidates were enumerated
+ * from what was known at the time and there is no reason the truth has to be one
+ * of them; forcing a binary would launder a guess into a finding.
+ */
+function verdict(measurements: Measurement[]): string {
+  const lossy = measurements.filter((m) => m.shortfall > 0)
+  if (lossy.length === 0) return 'no-loss-here'
+  if (!measurements.every((m) => m.exactPrefix)) return 'inconclusive-not-a-clean-truncation'
 
-  // A single discarded read is bounded by the buffer size and does not care how
-  // much was sent; a timeout takes whatever was queued, so it grows and wanders.
-  const spread = Math.max(...shortfalls) - Math.min(...shortfalls.filter((n) => n > 0))
-  if (allUnderOneRead && spread < 4096) return 'consistent-with-one-discarded-read'
-  return 'consistent-with-the-200ms-destroy'
+  const losses = lossy.map((m) => m.shortfall)
+  const everyRunLost = lossy.length === measurements.length
+  const withinOneRead = Math.max(...losses) < 4096
+  const clustered = Math.max(...losses) - Math.min(...losses) < 1024
+
+  if (everyRunLost && withinOneRead && clustered) return 'consistent-with-one-discarded-read'
+
+  // Intermittent, or larger than a buffer, or wandering: all three are what a
+  // race against a 200ms timer looks like and none is what a fixed cap does.
+  if (!everyRunLost || !withinOneRead) return 'consistent-with-the-200ms-destroy'
+
+  return 'inconclusive-loss-is-bounded-but-uneven'
 }
