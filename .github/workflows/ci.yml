@@ -95,6 +95,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends ripgrep
           rg --version | head -1
 
+      # Needs no install, so it runs before one. Four source files in this
+      # repository have carried a literal NUL byte, which makes git classify
+      # them as binary and stop showing diffs entirely -- the code works, the
+      # tests pass, and every later change to that file becomes invisible in
+      # review. Cheap to check, expensive to notice by eye.
+      - name: Check for NUL bytes in source
+        run: ./scripts/check-source-bytes.sh
+
       # typecheck, lint, format:check, test -- see the root package.json. One
       # script so that CI and `pnpm verify` on a laptop cannot drift apart.
       - name: Verify
