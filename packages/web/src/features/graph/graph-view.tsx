@@ -482,6 +482,10 @@ export function GraphView({ className }: GraphViewProps) {
                   data-tone={node.tone}
                   data-done={node.done || undefined}
                   data-missing={node.missing || undefined}
+                  // Drawn the same as an unwritten target -- both are links
+                  // that go nowhere -- but exposed so the difference is
+                  // stylable without reaching back into the model.
+                  data-ambiguous={node.ambiguous || undefined}
                   data-open={(node.path !== null && node.path === openPath) || undefined}
                   role="button"
                   // One tab stop for the whole graph, not one per node: at a
@@ -679,7 +683,10 @@ const LEGEND: LegendEntry[] = [
   { shape: 'square', kind: 'todo', tone: 'task', label: 'Todo' },
   { shape: 'square', kind: 'todo', tone: 'done', label: 'Done', done: true },
   { shape: 'triangle', kind: 'reminder', tone: 'task', label: 'Reminder' },
-  { shape: 'circle', kind: 'note', tone: 'structure', label: 'Not written yet', missing: true },
+  // Not "not written yet": the same outline is also how an ambiguous link is
+  // drawn, and naming only the common case would make the legend wrong for the
+  // other one. The tooltip says which.
+  { shape: 'circle', kind: 'note', tone: 'structure', label: 'No note behind it', missing: true },
 ]
 
 const ICON = {

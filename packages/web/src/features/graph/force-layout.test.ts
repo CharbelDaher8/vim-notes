@@ -276,30 +276,69 @@ describe('settling', () => {
     expect(isExhausted(layout)).toBe(false)
   })
 
+  /**
+   * Steps for the heat to fall from 1 to `alphaMin`, solved rather than
+   * observed.
+   *
+   * Derived on purpose. A literal here would be a number that happened to pass
+   * on the day it was written, and would go quietly stale the moment anyone
+   * tuned the schedule -- still green, no longer meaning anything. Computed from
+   * the options, it keeps asserting the same property whatever the constants
+   * become, and it fails loudly if the decay stops being geometric.
+   */
+  const coolingSteps = (layout: Layout) =>
+    Math.ceil(Math.log(layout.options.alphaMin) / Math.log(1 - layout.options.alphaDecay))
+
   it.each([40, 300, 1000])('stops on a %i-node graph that never finds an equilibrium', (count) => {
     const layout = createLayout(frustrated(count))
 
     const ticks = runUntilSettled(layout)
 
-    // Under a quarter of the budget, and by cooling rather than by hitting the
-    // wall -- the wall is a backstop, not the mechanism.
-    expect(ticks).toBeLessThan(250)
+    // By cooling or by going still -- never by hitting the tick ceiling, which
+    // is a backstop rather than the mechanism.
+    expect(ticks).toBeLessThanOrEqual(coolingSteps(layout))
     expect(isExhausted(layout)).toBe(false)
   })
 
-  it('bounds how long it can run by the cooling schedule, not by the graph', () => {
-    const small = createLayout(frustrated(20))
-    const large = createLayout(frustrated(800))
+  it('bounds how long it can run by the cooling schedule, whatever the graph', () => {
+    // Four hundred times the nodes, and two shapes that behave completely
+    // differently: a chain relaxes into an equilibrium, a chorded ring never
+    // does. Neither may outlast the schedule.
+    const graphs = [
+      createLayout(frustrated(5)),
+      createLayout(frustrated(200)),
+      createLayout(frustrated(2000)),
+      createLayout({
+        nodes: ids(200),
+        edges: Array.from({ length: 199 }, (_, i) => ({ from: `n${i}`, to: `n${i + 1}` })),
+      }),
+    ]
 
-    runUntilSettled(small)
-    runUntilSettled(large)
+    for (const layout of graphs) {
+      runUntilSettled(layout)
 
-    // The ceiling is a property of the schedule, so forty times the nodes buys
-    // no extra time. Going still early is still allowed and still preferred --
-    // a small graph that finds its equilibrium stops before the heat runs out,
-    // which is why this is a bound rather than an equality.
-    for (const layout of [small, large]) expect(layout.ticks).toBeLessThan(250)
-    expect(small.ticks).toBeLessThanOrEqual(large.ticks)
+      expect(layout.ticks).toBeLessThanOrEqual(coolingSteps(layout))
+      // And it really did stop for a reason, rather than the harness giving up.
+      expect(
+        layout.alpha <= layout.options.alphaMin || layout.stillFor >= layout.options.settleSteps,
+      ).toBe(true)
+    }
+  })
+
+  it('runs the heat down geometrically, so the bound above is the real one', () => {
+    const layout = createLayout(frustrated(50))
+    const { alphaDecay, alphaMin } = layout.options
+
+    expect(layout.alpha).toBe(1)
+
+    step(layout)
+    expect(layout.alpha).toBeCloseTo(1 - alphaDecay, 12)
+
+    step(layout)
+    expect(layout.alpha).toBeCloseTo((1 - alphaDecay) ** 2, 12)
+
+    for (let i = layout.ticks; i < coolingSteps(layout); i += 1) step(layout)
+    expect(layout.alpha).toBeLessThanOrEqual(alphaMin)
   })
 
   it('starts a barely-changed rebuild cool, so a save nudges instead of reshuffling', () => {

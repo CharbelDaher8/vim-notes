@@ -2,30 +2,25 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 
 import {
   createLayout,
-  isSettled,
   layoutPositions,
-  step,
   type Layout,
   type LayoutOptions,
   type Vec,
 } from './force-layout'
 import type { Scene } from './graph-scene'
+import { browserFrameHost, createSimulationLoop } from './simulation-loop'
 
 /**
- * The bridge between the pure simulation and the browser: one animation loop,
- * and the rules for when it is allowed to run.
+ * The layout's lifetime across React renders: build it, drive it, and hand its
+ * positions to whatever replaces it.
  *
- * Everything here is about *stopping*. A `requestAnimationFrame` loop is the
- * easiest way to flatten a laptop battery ever invented -- it will happily wake
- * the compositor sixty times a second forever, drawing a picture that stopped
- * changing two minutes ago.
- *
- * `isSettled` covers the layout's own reasons to stop: it went still, or it ran
- * out of heat, or it hit the tick ceiling. What this file adds is the reason
- * that has nothing to do with the layout -- the tab is not on screen. That one
- * is not covered by the browser either: throttling a background tab is a
- * heuristic rather than a guarantee, and a tab on a second monitor may not be
- * throttled at all.
+ * The loop itself lives in simulation-loop.ts, where it can be tested against a
+ * frame source that holds still. What is left here is the part that genuinely
+ * needs React and a document: rebuilding when the scene changes, carrying
+ * positions across that rebuild, and connecting `visibilitychange` to the
+ * loop's pause. That last one is not covered by the browser -- throttling a
+ * background tab is a heuristic rather than a guarantee, and a tab on a second
+ * monitor may not be throttled at all.
  */
 
 export interface Simulation {
@@ -36,9 +31,9 @@ export interface Simulation {
 }
 
 /**
- * With reduced motion asked for, the layout is not animated at all -- it is
- * solved and then shown. Which frees the loop to take several steps per frame,
- * because nobody is watching the intermediate ones.
+ * With reduced motion asked for, the layout is solved rather than animated.
+ * Nobody is watching the intermediate states, which frees the loop to take
+ * several steps per frame and finish in a fraction of the wall time.
  */
 const REDUCED_MOTION_STEPS = 8
 
@@ -82,58 +77,31 @@ export function useSimulation(
     layoutRef.current = layout
 
     const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const perFrame = calm ? REDUCED_MOTION_STEPS : 1
 
-    let frame = 0
-    let stopped = false
-
-    const tick = () => {
-      frame = 0
-
-      for (let i = 0; i < perFrame && !isSettled(layout); i += 1) step(layout)
-
-      // Under reduced motion the intermediate states are never painted, so what
-      // appears is the finished layout rather than a graph shuffling itself
-      // into place.
-      if (!calm || isSettled(layout)) drawRef.current(layout)
-
-      if (isSettled(layout)) {
-        carriedRef.current = layoutPositions(layout)
-        setRunning(false)
-        return
-      }
-
-      frame = requestAnimationFrame(tick)
-    }
-
-    const start = () => {
-      if (stopped || frame !== 0 || document.hidden || isSettled(layout)) return
-      setRunning(true)
-      frame = requestAnimationFrame(tick)
-    }
+    const loop = createSimulationLoop({
+      layout,
+      host: browserFrameHost,
+      draw: (current) => drawRef.current(current),
+      stepsPerFrame: calm ? REDUCED_MOTION_STEPS : 1,
+      paintWhileRunning: !calm,
+      onRunningChange: setRunning,
+    })
 
     const onVisibilityChange = () => {
-      if (!document.hidden) {
-        start()
-        return
-      }
-
-      cancelAnimationFrame(frame)
-      frame = 0
-      setRunning(false)
+      if (document.hidden) loop.pause()
+      else loop.start()
     }
 
-    // Paint before the first tick so that a layout restored from the previous
+    // Paint before the first frame so that a layout restored from the previous
     // scene -- or one that is already settled, which is every empty graph --
     // still puts something on screen.
     drawRef.current(layout)
-    start()
+    loop.start()
 
     document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
-      stopped = true
-      cancelAnimationFrame(frame)
+      loop.stop()
       document.removeEventListener('visibilitychange', onVisibilityChange)
       // On the way out, not only on settling: a graph replaced mid-flight still
       // has positions worth keeping, and losing them is the jump this whole

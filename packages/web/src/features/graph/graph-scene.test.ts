@@ -116,6 +116,75 @@ describe('unresolved links', () => {
     expect(find(scene.nodes, 'ghost').missing).toBe(true)
   })
 
+  it('tells an ambiguous target apart from one that was never written', () => {
+    // Resolution refuses to guess between two notes of the same name, so the
+    // link comes back unresolved even though notes by that name exist. Saying
+    // "no note by this name yet" to someone looking at two of them would read
+    // as the app being broken.
+    const scene = buildScene(
+      graph(
+        [
+          node({ id: 'from', kind: 'note', label: 'today', path: p('journal/2026-08-02.md') }),
+          node({ id: 'one', kind: 'note', label: 'roadmap', path: p('work/roadmap.md') }),
+          node({ id: 'two', kind: 'note', label: 'roadmap', path: p('home/roadmap.md') }),
+          node({ id: 'missing:roadmap', kind: 'note', label: 'roadmap' }),
+          node({ id: 'missing:shed', kind: 'note', label: 'shed' }),
+        ],
+        [
+          { from: 'from', to: 'missing:roadmap', kind: 'unresolved' },
+          { from: 'from', to: 'missing:shed', kind: 'unresolved' },
+        ],
+      ),
+    )
+
+    const ambiguous = find(scene.nodes, 'missing:roadmap')
+    const absent = find(scene.nodes, 'missing:shed')
+
+    expect(ambiguous.missing).toBe(true)
+    expect(ambiguous.ambiguous).toBe(true)
+    expect(ambiguous.description).toContain('more than one note has this name')
+
+    expect(absent.ambiguous).toBe(false)
+    expect(absent.description).toContain('no note by this name yet')
+  })
+
+  it('matches an ambiguous name past the case the index lowercased away', () => {
+    // Missing targets arrive normalised to lower case; a real note keeps the
+    // capitals it was filed under. Comparing them literally would call every
+    // ambiguous link absent.
+    const scene = buildScene(
+      graph(
+        [
+          node({ id: 'one', kind: 'note', label: 'Roadmap', path: p('work/Roadmap.md') }),
+          node({ id: 'two', kind: 'note', label: 'Roadmap', path: p('home/Roadmap.md') }),
+          node({ id: 'missing:roadmap', kind: 'note', label: 'roadmap' }),
+        ],
+        [{ from: 'one', to: 'missing:roadmap', kind: 'unresolved' }],
+      ),
+    )
+
+    expect(find(scene.nodes, 'missing:roadmap').ambiguous).toBe(true)
+  })
+
+  it('does not call a link ambiguous because of a note the cap left out', () => {
+    const nodes = [
+      node({ id: 'hub', kind: 'note', label: 'hub', path: p('hub.md') }),
+      node({ id: 'missing:roadmap', kind: 'note', label: 'roadmap' }),
+      ...Array.from({ length: 30 }, (_, i) =>
+        node({ id: `n${i}`, kind: 'note', label: 'roadmap', path: p(`folder${i}/roadmap.md`) }),
+      ),
+    ]
+
+    const scene = buildScene(
+      graph(nodes, [{ from: 'hub', to: 'missing:roadmap', kind: 'unresolved' }]),
+      {
+        maxNodes: 3,
+      },
+    )
+
+    expect(find(scene.nodes, 'missing:roadmap').ambiguous).toBe(true)
+  })
+
   it('holds an unresolved link further out and more loosely than a real one', () => {
     const scene = buildScene(
       graph(

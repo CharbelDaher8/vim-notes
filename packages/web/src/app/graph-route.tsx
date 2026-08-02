@@ -16,8 +16,16 @@ const GraphView = lazy(() =>
 
 export function GraphRoute() {
   return (
-    <Suspense fallback={<p className="route-loading">Loading graph…</p>}>
-      <GraphView />
-    </Suspense>
+    // GraphView is `height: 100%`, so something above it has to establish one.
+    // It happens to resolve through #root today, but relying on that means the
+    // graph silently collapses the first time this route is nested in anything.
+    //
+    // `--viewport-height` rather than 100dvh so the mobile keyboard shrinks it
+    // the same way it does everywhere else; see use-visual-viewport.ts.
+    <div className="route-fill">
+      <Suspense fallback={<p className="route-loading">Loading graph…</p>}>
+        <GraphView />
+      </Suspense>
+    </div>
   )
 }

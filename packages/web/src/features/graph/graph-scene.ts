@@ -47,6 +47,16 @@ export interface SceneNode {
    * yet", not as a broken reference.
    */
   missing: boolean
+  /**
+   * The link goes nowhere because the name matches more than one note, not
+   * because nothing is there.
+   *
+   * The index reports one edge kind for both, but they are opposite problems.
+   * "Not written yet" is the normal, useful state; "two notes are called this"
+   * is something to go and fix, and telling someone their note does not exist
+   * while they are looking at two of them is worse than saying nothing.
+   */
+  ambiguous: boolean
   radius: number
   degree: number
   /** What a screen reader says, and what the tooltip shows. */
@@ -144,6 +154,19 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
   const kept = selectNodes(sourceNodes, degree, maxNodes)
   const keptIds = new Set(kept.map((node) => node.id))
 
+  // Names that do have notes behind them. A wikilink target only fails to
+  // resolve while a note of that name exists if there is more than one, because
+  // resolution refuses to guess between them -- so a hit here means ambiguous
+  // rather than absent.
+  //
+  // Lowercased on both sides: the index normalises a missing target's label and
+  // leaves a real note's basename as it was typed. Drawn from the whole graph
+  // rather than the drawn subset, so the cap cannot change the answer.
+  const namesWithNotes = new Set<string>()
+  for (const node of sourceNodes) {
+    if (node.kind === 'note' && node.path !== null) namesWithNotes.add(node.label.toLowerCase())
+  }
+
   const nodes = kept.map((node): SceneNode => {
     const links = degree.get(node.id) ?? 0
     const done = node.done === true
@@ -151,6 +174,7 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
     // the index may model a phantom target as a pathless note, and it may
     // simply be the far end of an unresolved edge.
     const missing = (node.kind === 'note' && node.path === null) || unresolvedTargets.has(node.id)
+    const ambiguous = missing && namesWithNotes.has(node.label.toLowerCase())
 
     return {
       id: node.id,
@@ -164,6 +188,7 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
       day: node.day,
       done,
       missing,
+      ambiguous,
       radius: radiusFor(node.kind, links, missing),
       degree: links,
       description: describe({
@@ -173,6 +198,7 @@ export function buildScene(graph: NoteGraph, options: SceneOptions = {}): Scene 
         day: node.day,
         done,
         missing,
+        ambiguous,
       }),
     }
   })
@@ -301,13 +327,16 @@ function describe(node: {
   day: string | null
   done: boolean
   missing: boolean
+  ambiguous: boolean
 }): string {
   if (node.kind === 'day') return `Day ${node.label}`
 
   if (node.kind === 'note') {
-    return node.missing
-      ? `${node.label} — no note by this name yet`
-      : `Note ${node.path ?? node.label}`
+    if (!node.missing) return `Note ${node.path ?? node.label}`
+
+    return node.ambiguous
+      ? `${node.label} — more than one note has this name, so the link is not followed`
+      : `${node.label} — no note by this name yet`
   }
 
   const kind = node.kind === 'todo' ? (node.done ? 'Todo, done' : 'Todo') : 'Reminder'

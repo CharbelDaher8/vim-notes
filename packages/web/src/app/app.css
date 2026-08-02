@@ -253,3 +253,10 @@
     visibility: visible;
   }
 }
+
+/* A route that wants the whole window. The graph sizes itself at 100%, so
+   something above it has to establish the height. */
+.route-fill {
+  height: var(--viewport-height, 100dvh);
+  overflow: hidden;
+}
