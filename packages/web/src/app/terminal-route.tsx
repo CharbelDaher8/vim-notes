@@ -32,6 +32,18 @@ export function TerminalRoute() {
 }
 
 /**
+ * Where the pty WebSocket lives. Three places have to agree on this string and
+ * nothing checks them: `DEFAULT_PATH` in packages/server/src/ws/terminal-socket.ts,
+ * the exact-match handler in deploy/Caddyfile, and here.
+ *
+ * They did not agree. The client asked for `/terminal` while the server and the
+ * proxy both served `/term/ws`, so the terminal could never have connected --
+ * and each side was internally consistent, so no unit test on either could see
+ * it. Kept as a named constant so the next person greps one token.
+ */
+const TERMINAL_SOCKET_PATH = '/term/ws'
+
+/**
  * Same origin as the page. The server binds to the tailnet and is never public
  * (DECISIONS.md §11), so there is no cross-origin case to configure -- and a
  * configurable socket URL on a shell-over-WebSocket is a footgun worth not
@@ -39,5 +51,5 @@ export function TerminalRoute() {
  */
 function terminalUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}/terminal`
+  return `${protocol}//${window.location.host}${TERMINAL_SOCKET_PATH}`
 }

@@ -158,11 +158,19 @@ describe('carrying positions across a rebuild', () => {
   })
 })
 
+/**
+ * Cooling is switched off throughout this block. It is what makes the layout
+ * terminate rather than what makes it correct, and leaving it on would mean
+ * every assertion about the force law was really an assertion about where the
+ * heat happened to run out. Termination gets its own block below.
+ */
 describe('the forces', () => {
+  const forcesOnly = { repulsion: 0, gravity: 0, alphaDecay: 0 }
+
   it('pulls a linked pair to the rest length of their edge', () => {
     const layout = createLayout(
       { nodes: [{ id: 'a' }, { id: 'b' }], edges: [{ from: 'a', to: 'b', length: 80 }] },
-      { repulsion: 0, gravity: 0 },
+      forcesOnly,
       placed({ a: { x: 0, y: 0 }, b: { x: 300, y: 0 } }),
     )
 
@@ -174,13 +182,29 @@ describe('the forces', () => {
   it('pushes a linked pair apart when they start on top of each other', () => {
     const layout = createLayout(
       { nodes: [{ id: 'a' }, { id: 'b' }], edges: [{ from: 'a', to: 'b', length: 80 }] },
-      { repulsion: 0, gravity: 0 },
+      forcesOnly,
       placed({ a: { x: 0, y: 0 }, b: { x: 2, y: 0 } }),
     )
 
     runUntilSettled(layout)
 
     expect(apart(layout, 'a', 'b')).toBeCloseTo(80, 0)
+  })
+
+  it('lands near the rest length with cooling on, which is what ships', () => {
+    const layout = createLayout(
+      { nodes: [{ id: 'a' }, { id: 'b' }], edges: [{ from: 'a', to: 'b', length: 80 }] },
+      { repulsion: 0, gravity: 0 },
+      placed({ a: { x: 0, y: 0 }, b: { x: 300, y: 0 } }),
+    )
+
+    runUntilSettled(layout)
+
+    // Annealing freezes the graph a little short of its exact equilibrium. A
+    // few percent on an edge length is invisible; the alternative is a
+    // simulation that is exactly right and never stops.
+    expect(apart(layout, 'a', 'b')).toBeGreaterThan(72)
+    expect(apart(layout, 'a', 'b')).toBeLessThan(88)
   })
 
   it('drives unlinked nodes away from each other', () => {
@@ -215,7 +239,7 @@ describe('the forces', () => {
           { from: 'note', to: 'far', length: 120, strength: 0.045 },
         ],
       },
-      { repulsion: 0, gravity: 0 },
+      forcesOnly,
     )
 
     runUntilSettled(layout)
@@ -225,6 +249,21 @@ describe('the forces', () => {
 })
 
 describe('settling', () => {
+  /**
+   * A ring with chords: every node is pulled by neighbours that disagree, which
+   * is what a real note graph looks like and what a chain deliberately is not.
+   * This shape does not converge under damping alone -- measured, its peak speed
+   * plateaus and stays there -- so it is the case the cooling schedule exists
+   * for, and the one worth asserting on.
+   */
+  const frustrated = (count: number) => ({
+    nodes: ids(count),
+    edges: Array.from({ length: Math.round(count * 1.4) }, (_, i) => ({
+      from: `n${i % count}`,
+      to: `n${(i * 7 + 3) % count}`,
+    })),
+  })
+
   it('reaches stillness well inside the tick budget', () => {
     const layout = createLayout({
       nodes: ids(40),
@@ -235,6 +274,64 @@ describe('settling', () => {
 
     expect(ticks).toBeLessThan(layout.options.maxTicks)
     expect(isExhausted(layout)).toBe(false)
+  })
+
+  it.each([40, 300, 1000])('stops on a %i-node graph that never finds an equilibrium', (count) => {
+    const layout = createLayout(frustrated(count))
+
+    const ticks = runUntilSettled(layout)
+
+    // Under a quarter of the budget, and by cooling rather than by hitting the
+    // wall -- the wall is a backstop, not the mechanism.
+    expect(ticks).toBeLessThan(250)
+    expect(isExhausted(layout)).toBe(false)
+  })
+
+  it('bounds how long it can run by the cooling schedule, not by the graph', () => {
+    const small = createLayout(frustrated(20))
+    const large = createLayout(frustrated(800))
+
+    runUntilSettled(small)
+    runUntilSettled(large)
+
+    // The ceiling is a property of the schedule, so forty times the nodes buys
+    // no extra time. Going still early is still allowed and still preferred --
+    // a small graph that finds its equilibrium stops before the heat runs out,
+    // which is why this is a bound rather than an equality.
+    for (const layout of [small, large]) expect(layout.ticks).toBeLessThan(250)
+    expect(small.ticks).toBeLessThanOrEqual(large.ticks)
+  })
+
+  it('starts a barely-changed rebuild cool, so a save nudges instead of reshuffling', () => {
+    const first = createLayout(frustrated(50))
+    runUntilSettled(first)
+
+    const settled = layoutPositions(first)
+    const withOneMore = {
+      nodes: [...ids(50), { id: 'new-todo' }],
+      edges: [...frustrated(50).edges, { from: 'n3', to: 'new-todo' }],
+    }
+
+    const nudged = createLayout(withOneMore, {}, settled)
+    const cold = createLayout(withOneMore)
+
+    expect(nudged.alpha).toBeLessThan(0.35)
+    expect(cold.alpha).toBe(1)
+
+    // And therefore stops far sooner, which is the point: the picture was
+    // already right and only needed somewhere to put one new node.
+    expect(runUntilSettled(nudged)).toBeLessThan(runUntilSettled(cold))
+  })
+
+  it('anneals properly when a rebuild replaces most of the graph', () => {
+    const wholesale = createLayout(
+      frustrated(50),
+      {},
+      // Positions for nodes that are almost all gone: an import, not a save.
+      new Map([['n0', { x: 0, y: 0 }]]),
+    )
+
+    expect(wholesale.alpha).toBeGreaterThan(0.9)
   })
 
   it('needs several consecutive still steps, not one', () => {

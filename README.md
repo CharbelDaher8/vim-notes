@@ -40,14 +40,29 @@ Requires Node 22+ and pnpm (via corepack).
 corepack enable pnpm
 pnpm install
 
+git init notes-dev   # see below — required, once
+
 pnpm dev          # server + web in parallel
 pnpm test         # vitest across packages
 pnpm typecheck
 pnpm lint
+pnpm verify       # typecheck + lint + format + test, same as CI
 ```
 
 Point the server at a notes directory with `NOTES_ROOT` (defaults to
 `./notes-dev`, which is gitignored).
+
+**The notes directory has to be its own git repository**, and the server refuses
+to start otherwise. That is not pedantry. `./notes-dev` sits inside this
+repository, so without its own `.git` it inherits this one — and then
+auto-commit either records nothing at all (because the path is ignored) or
+starts committing this repository's source tree into its own history. Both fail
+silently: saves work, commits report "nothing to commit", and history quietly
+stops. Preflight checks it at boot and prints the exact command to fix it.
+
+The server also needs `git`, `ripgrep` and `nvim` on `PATH`. A missing `git` is
+fatal for the same reason; the other two only disable search and the terminal,
+and are reported at startup rather than at the moment you reach for them.
 
 ## Why it is built this way
 

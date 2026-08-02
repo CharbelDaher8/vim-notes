@@ -18,17 +18,14 @@ import type { Scene } from './graph-scene'
  * Everything here is about *stopping*. A `requestAnimationFrame` loop is the
  * easiest way to flatten a laptop battery ever invented -- it will happily wake
  * the compositor sixty times a second forever, drawing a picture that stopped
- * changing two minutes ago. So this stops on three separate conditions, and
- * each one is enough on its own:
+ * changing two minutes ago.
  *
- *   1. the layout settles (nothing is moving; see `isSettled`),
- *   2. the tick budget runs out (a graph that oscillates instead of converging
- *      still has to give the CPU back),
- *   3. the tab is hidden.
- *
- * The third is not covered by the first two and is not covered by the browser
- * either: throttling a background tab is a heuristic, not a guarantee, and on a
- * second monitor a "hidden" tab may not be throttled at all.
+ * `isSettled` covers the layout's own reasons to stop: it went still, or it ran
+ * out of heat, or it hit the tick ceiling. What this file adds is the reason
+ * that has nothing to do with the layout -- the tab is not on screen. That one
+ * is not covered by the browser either: throttling a background tab is a
+ * heuristic rather than a guarantee, and a tab on a second monitor may not be
+ * throttled at all.
  */
 
 export interface Simulation {

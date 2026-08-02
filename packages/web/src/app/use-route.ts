@@ -1,17 +1,31 @@
 import { useEffect, useState } from 'react'
 
-export type Route = 'notes' | 'terminal'
+export type Route = 'notes' | 'terminal' | 'graph'
 
 /**
- * Two routes, so no router.
+ * Three routes, still no router.
  *
- * A routing library would be a dependency and a chunk to serve `/` and `/term`,
- * which are not so much two pages as two applications that happen to share a
- * server. If a third route ever appears this should become a real router rather
- * than growing more `startsWith`.
+ * A routing library would be a dependency and a chunk to serve what are really
+ * three applications sharing a server, and the phone pays for every kilobyte
+ * (DECISIONS.md §13). But a chain of `startsWith` calls is how this turns into
+ * a mess, so the prefixes live in a table: adding a route is one entry, and the
+ * matching rule stays in one place.
+ *
+ * If this ever needs parameters, nested routes or anything resembling a
+ * history stack, replace it with a real router rather than extending the table.
  */
+const ROUTES: ReadonlyArray<{ prefix: string; route: Route }> = [
+  { prefix: '/term', route: 'terminal' },
+  { prefix: '/graph', route: 'graph' },
+]
+
 export function routeFor(pathname: string): Route {
-  return pathname === '/term' || pathname.startsWith('/term/') ? 'terminal' : 'notes'
+  // Matched on a segment boundary, so `/terminal-notes` is not the terminal.
+  const match = ROUTES.find(
+    ({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  )
+
+  return match?.route ?? 'notes'
 }
 
 export function useRoute(): Route {

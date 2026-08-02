@@ -16,11 +16,12 @@
  * that no other component, no event handler and no piece of state ever reads --
  * so nothing is gained by routing them through React and a great deal is lost.
  */
-import type { NoteGraph } from '@vim-notes/core'
+import type { GraphEdgeKind, NoteGraph } from '@vim-notes/core'
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -114,12 +115,6 @@ export function GraphView({ className }: GraphViewProps) {
     [applyView],
   )
 
-  const fit = useCallback(() => {
-    const layout = layoutRef.current
-    if (layout === null) return
-    setView(fitToBounds(layoutBounds(layout), sizeRef.current))
-  }, [setView])
-
   const measure = useCallback(() => {
     const element = surfaceRef.current
     if (element === null) return
@@ -128,45 +123,6 @@ export function GraphView({ className }: GraphViewProps) {
     sizeRef.current = { width: rect.width, height: rect.height }
     originRef.current = { x: rect.left, y: rect.top }
   }, [])
-
-  // Measured and wired before the simulation's effect runs, because the first
-  // frame needs a size to fit into. Effects fire in the order their hooks were
-  // called, so this one has to be declared above `useSimulation`.
-  useEffect(() => {
-    const element = surfaceRef.current
-    if (element === null) return
-
-    measure()
-
-    const observer = new ResizeObserver(() => {
-      measure()
-      // Rotating a phone changes the frame, not the intent: if the view was
-      // still automatic it stays automatic.
-      if (!framedRef.current) fit()
-    })
-    observer.observe(element)
-
-    // Registered by hand because React attaches `onWheel` passively, and a
-    // passive listener cannot call `preventDefault` -- so the browser would
-    // scroll the page while the graph zoomed.
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault()
-      framedRef.current = true
-      setView(
-        zoomAround(viewRef.current, wheelZoomFactor(event.deltaY, event.deltaMode), {
-          x: event.clientX - originRef.current.x,
-          y: event.clientY - originRef.current.y,
-        }),
-      )
-    }
-
-    element.addEventListener('wheel', onWheel, { passive: false })
-
-    return () => {
-      observer.disconnect()
-      element.removeEventListener('wheel', onWheel)
-    }
-  }, [fit, measure, setView])
 
   useEffect(() => {
     nodeRefs.current.length = scene.nodes.length
@@ -212,6 +168,56 @@ export function GraphView({ className }: GraphViewProps) {
   )
 
   const { layoutRef, running } = useSimulation(scene, draw)
+
+  const fit = useCallback(() => {
+    const layout = layoutRef.current
+    if (layout === null) return
+    setView(fitToBounds(layoutBounds(layout), sizeRef.current))
+  }, [layoutRef, setView])
+
+  /*
+   * A layout effect rather than a passive one, and not because it touches
+   * layout: it has to run *before* the simulation's effect, which paints its
+   * first frame and needs a measured element to fit that frame into. React runs
+   * every layout effect in a commit before any passive one, which makes the
+   * ordering a guarantee rather than a consequence of where this sits in the
+   * file.
+   */
+  useLayoutEffect(() => {
+    const element = surfaceRef.current
+    if (element === null) return
+
+    measure()
+
+    const observer = new ResizeObserver(() => {
+      measure()
+      // Rotating a phone changes the frame, not the intent: a view that was
+      // still automatic stays automatic.
+      if (!framedRef.current) fit()
+    })
+    observer.observe(element)
+
+    // Registered by hand because React attaches `onWheel` passively, and a
+    // passive listener cannot call `preventDefault` -- so the page would scroll
+    // at the same time as the graph zoomed.
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      framedRef.current = true
+      setView(
+        zoomAround(viewRef.current, wheelZoomFactor(event.deltaY, event.deltaMode), {
+          x: event.clientX - originRef.current.x,
+          y: event.clientY - originRef.current.y,
+        }),
+      )
+    }
+
+    element.addEventListener('wheel', onWheel, { passive: false })
+
+    return () => {
+      observer.disconnect()
+      element.removeEventListener('wheel', onWheel)
+    }
+  }, [fit, measure, setView])
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -524,7 +530,15 @@ export function GraphView({ className }: GraphViewProps) {
           </div>
         ) : null}
 
-        <div className="graph__controls">
+        <div
+          className="graph__controls"
+          // The controls sit inside the surface, so without this a press on a
+          // button also arms a pan, and Enter on a focused button would fall
+          // through to the graph's own Enter and open whatever node was last
+          // focused.
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           <button
             type="button"
             className="icon-button"
@@ -584,7 +598,14 @@ export function GraphView({ className }: GraphViewProps) {
             : scene.omitted > 0
               ? `Showing the ${scene.nodes.length} best-connected of ${scene.totalNodes} nodes.`
               : `${scene.nodes.length} nodes, ${scene.edges.length} links.`}
-          {running ? <span className="graph__settling"> Settling…</span> : null}
+          {/* Hidden from the live region: it reports motion, and motion is not
+              something a screen reader user is waiting to hear about. */}
+          {running ? (
+            <span className="graph__settling" aria-hidden="true">
+              {' '}
+              Settling…
+            </span>
+          ) : null}
         </p>
       </footer>
     </section>
@@ -592,7 +613,7 @@ export function GraphView({ className }: GraphViewProps) {
 }
 
 /** Containment and day membership are obvious from proximity; links are not. */
-function directed(kind: string): boolean {
+function directed(kind: GraphEdgeKind): boolean {
   return kind === 'link' || kind === 'unresolved'
 }
 

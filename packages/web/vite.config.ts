@@ -10,6 +10,8 @@ export default defineConfig({
     host: true,
     proxy: {
       '/trpc': { target: 'http://127.0.0.1:4000', changeOrigin: true, ws: true },
+      // The pty socket. Same origin in production, so only dev needs this.
+      '/terminal': { target: 'ws://127.0.0.1:4000', ws: true },
     },
   },
 

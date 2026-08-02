@@ -16,9 +16,15 @@
  *
  * Integrated with velocity Verlet rather than the more common semi-implicit
  * Euler. Verlet uses the acceleration at both ends of the step, so it stays
- * stable at a step size where Euler visibly overshoots and rings -- which
- * matters because a bigger step means fewer frames before the thing settles,
- * and settling is what lets the animation loop stop (see `isSettled`).
+ * stable at a step size where Euler visibly overshoots and rings, which means
+ * fewer frames to reach the same picture.
+ *
+ * Termination is the other half of the design and it is not left to physics.
+ * Forces are scaled by a heat that decays to nothing over about 220 steps, so
+ * the animation ends on a schedule whether or not the graph found an
+ * arrangement it liked -- see `alphaDecay` for the measurement that made that
+ * necessary. A graph that does settle earlier stops earlier; `maxTicks` is
+ * behind both as a backstop that should never fire.
  */
 
 const TAU = Math.PI * 2
@@ -73,8 +79,36 @@ export interface LayoutOptions {
    * forever and never settle.
    */
   gravity: number
-  /** Velocity retained per step. This is what turns motion into stillness. */
+  /** Velocity retained per step. */
   damping: number
+  /**
+   * Fraction of the remaining heat given up each step.
+   *
+   * This is what actually guarantees the animation stops, and it is not
+   * optional. Damping alone only converges if the graph *has* an equilibrium to
+   * fall into, and a real one usually does not: a note wanting to sit near
+   * three others that are pulling in different directions is a frustrated
+   * constraint, and the system will trade one arrangement for an equally bad
+   * one forever. Measured on a thousand-node graph, peak speed plateaus around
+   * 4 px/step and never approaches stillness.
+   *
+   * So the forces are scaled by a heat that decays geometrically to nothing.
+   * That turns the simulation from a physics model into what it actually is --
+   * an optimiser being annealed -- and makes termination arithmetic rather than
+   * a hope. The default reaches `alphaMin` in about 220 steps, so a cold start
+   * is roughly four seconds of motion at 60fps.
+   */
+  alphaDecay: number
+  /** Heat below which the layout is done, whatever it is still doing. */
+  alphaMin: number
+  /**
+   * Heat a rebuild starts at when nothing much changed.
+   *
+   * A save should nudge the graph, not re-anneal it. Starting a carried-over
+   * layout at full heat would shake a picture that was already correct, which
+   * is the same jump that keeping the positions exists to avoid.
+   */
+  reheat: number
   timeStep: number
   /** Added to every squared distance, so coincident nodes cannot divide by 0. */
   softening: number
@@ -85,9 +119,11 @@ export interface LayoutOptions {
   /** Consecutive still steps before the layout is called settled. */
   settleSteps: number
   /**
-   * Hard stop, whatever the graph is doing. A pathological graph that oscillates
-   * instead of converging must not be able to hold a `requestAnimationFrame`
-   * loop open forever on a laptop nobody is looking at.
+   * Hard stop, whatever the graph is doing.
+   *
+   * Cooling already guarantees an end, so this should never be reached. It is
+   * here because "should never" is not "cannot", and a `requestAnimationFrame`
+   * loop that fails to stop is a flat battery on a tab nobody is looking at.
    */
   maxTicks: number
   /**
@@ -108,6 +144,10 @@ export const DEFAULT_LAYOUT_OPTIONS: LayoutOptions = {
   springStrength: 0.05,
   gravity: 0.014,
   damping: 0.84,
+  // 0.001 ^ (1 / 220): heat runs out after about 220 steps.
+  alphaDecay: 0.0309,
+  alphaMin: 0.001,
+  reheat: 0.25,
   timeStep: 1,
   softening: 24,
   maxSpeed: 24,
@@ -135,6 +175,11 @@ export interface Layout {
    */
   readonly springs: LayoutSpring[]
   readonly options: LayoutOptions
+  /**
+   * Remaining heat: every force is scaled by this, and it decays to nothing.
+   * Starts at 1 for a fresh graph and lower for a rebuild that barely changed.
+   */
+  alpha: number
   /** Steps taken since this layout was created. */
   ticks: number
   /** Fastest node in the last step. The settling signal. */
@@ -226,6 +271,7 @@ export function createLayout(
     byId,
     springs,
     options,
+    alpha: startingHeat(nodes, options, previous),
     ticks: 0,
     peakSpeed: Number.POSITIVE_INFINITY,
     stillFor: 0,
@@ -245,7 +291,7 @@ export function createLayout(
  * everything else here decides "has it stopped?" from.
  */
 export function step(layout: Layout): number {
-  const { timeStep, damping, maxSpeed, settleSpeed } = layout.options
+  const { timeStep, damping, maxSpeed, settleSpeed, alphaDecay } = layout.options
   const half = timeStep / 2
 
   for (const node of layout.nodes) {
@@ -276,6 +322,7 @@ export function step(layout: Layout): number {
 
   layout.ticks += 1
   layout.peakSpeed = peak
+  layout.alpha -= layout.alpha * alphaDecay
   // Counted rather than tested once, because a node reversing direction passes
   // through zero speed. One still step means nothing; ten in a row means the
   // graph has actually stopped.
@@ -284,15 +331,36 @@ export function step(layout: Layout): number {
   return peak
 }
 
-/** True once the animation loop can stop without the picture changing. */
+/**
+ * True once the animation loop can stop without the picture changing.
+ *
+ * Three ways to be finished, and they are not redundant. A graph that found an
+ * equilibrium goes still and stops early. A graph that never will runs out of
+ * heat and stops on schedule. And `maxTicks` catches whatever neither of those
+ * anticipated.
+ */
 export function isSettled(layout: Layout): boolean {
   if (layout.nodes.length === 0) return true
-  return layout.stillFor >= layout.options.settleSteps || layout.ticks >= layout.options.maxTicks
+
+  return (
+    layout.alpha <= layout.options.alphaMin ||
+    layout.stillFor >= layout.options.settleSteps ||
+    layout.ticks >= layout.options.maxTicks
+  )
 }
 
-/** Ran out of ticks rather than actually converging. Worth admitting in the UI. */
+/**
+ * Stopped on the hard tick limit rather than by cooling or going still.
+ *
+ * Should not happen: cooling reaches `alphaMin` in about a fifth of the budget.
+ * If it ever does, the constants are wrong rather than the graph being unusual.
+ */
 export function isExhausted(layout: Layout): boolean {
-  return layout.ticks >= layout.options.maxTicks && layout.stillFor < layout.options.settleSteps
+  return (
+    layout.ticks >= layout.options.maxTicks &&
+    layout.alpha > layout.options.alphaMin &&
+    layout.stillFor < layout.options.settleSteps
+  )
 }
 
 /** A snapshot to hand to the next `createLayout` as `previous`. */
@@ -335,6 +403,15 @@ function accumulate(layout: Layout): void {
   else approximateRepulsion(layout)
 
   applySprings(layout)
+
+  // Every force scaled by the remaining heat, in one place at the end rather
+  // than threaded through each of them. As the heat runs out the forces vanish,
+  // damping takes the last of the momentum, and the graph stops -- which is the
+  // only thing here that makes stopping a certainty rather than a hope.
+  for (const node of layout.nodes) {
+    node.ax *= layout.alpha
+    node.ay *= layout.alpha
+  }
 }
 
 function applySprings(layout: Layout): void {
@@ -559,6 +636,30 @@ function descend(parent: Cell, node: LayoutNode, depth: number): void {
 }
 
 // --- Seeding ---------------------------------------------------------------
+
+/**
+ * How hot to start, from how much of the graph is new.
+ *
+ * A cold start is fully hot. A rebuild after someone saved a note is mostly the
+ * same graph, so it starts barely warm: enough to let a new TODO find its place
+ * and its neighbours shuffle over, not enough to redraw a picture that was
+ * already right. Between the two it scales with the churn, so a big import
+ * anneals properly rather than settling into whatever the old layout was.
+ */
+function startingHeat(
+  nodes: readonly LayoutNode[],
+  options: LayoutOptions,
+  previous?: ReadonlyMap<string, Vec> | null,
+): number {
+  if (previous === undefined || previous === null || previous.size === 0) return 1
+  if (nodes.length === 0) return options.reheat
+
+  let carried = 0
+  for (const node of nodes) if (previous.has(node.id)) carried += 1
+
+  const churn = 1 - carried / nodes.length
+  return Math.min(1, options.reheat + churn)
+}
 
 function seedRadius(count: number, springLength: number): number {
   // Area per node held roughly constant, so a big graph starts spread out

@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { usePlatform } from '../platform'
 import { useThemeSync } from '../shared/theme'
 import { useWorkspaceStore } from '../shared/workspace-store'
+import { GraphRoute } from './graph-route'
 import { NotesWorkspace } from './notes-workspace'
 import { TerminalRoute } from './terminal-route'
 import { useRoute } from './use-route'
@@ -24,7 +25,14 @@ export function App() {
   useThemeSync()
   useWindowTitle()
 
-  return useRoute() === 'terminal' ? <TerminalRoute /> : <NotesWorkspace />
+  switch (useRoute()) {
+    case 'terminal':
+      return <TerminalRoute />
+    case 'graph':
+      return <GraphRoute />
+    default:
+      return <NotesWorkspace />
+  }
 }
 
 function useWindowTitle(): void {

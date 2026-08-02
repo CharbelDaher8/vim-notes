@@ -40,6 +40,7 @@ export function AppHeader() {
         )}
       </h1>
 
+      <GraphLink />
       <TerminalLink />
 
       <DevTools />
@@ -90,6 +91,22 @@ function TerminalLink() {
   return (
     <a className="app__term-link" href="/term" title="Open nvim in a terminal">
       /term
+    </a>
+  )
+}
+
+/**
+ * Unlike the terminal, this is offered on a phone too: the graph is something
+ * you read rather than type into, and pan and zoom work under a thumb.
+ *
+ * Still a plain link rather than a client-side transition, so the graph chunk
+ * and its simulation are dropped entirely on the way back to the notes instead
+ * of sitting in memory behind them.
+ */
+function GraphLink() {
+  return (
+    <a className="app__term-link" href="/graph" title="See how the notes connect">
+      /graph
     </a>
   )
 }

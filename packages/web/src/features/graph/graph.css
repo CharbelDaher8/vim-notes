@@ -12,7 +12,10 @@
 
 .graph {
   --graph-note: var(--accent);
-  --graph-structure: var(--text-faint);
+  /* `--text-muted` rather than `--text-faint`: the faint token is tuned for
+     text sitting on a solid background, and a 2px ring or a dashed outline has
+     far less ink to carry the same contrast. */
+  --graph-structure: var(--text-muted);
   --graph-task: var(--warn);
   --graph-edge: var(--border-strong);
 
@@ -261,6 +264,11 @@
 .graph__controls .icon-button {
   min-width: 2.25rem;
   min-height: 2.25rem;
+}
+
+/* Nothing to zoom in on. */
+.graph__surface[data-empty] .graph__controls {
+  display: none;
 }
 
 /* --- Footer --------------------------------------------------------------- */
