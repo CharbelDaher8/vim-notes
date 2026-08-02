@@ -4,6 +4,7 @@
 export * from './domain/note-path'
 export * from './domain/conflict'
 export * from './domain/errors'
+export * from './domain/note-markup'
 
 export * from './ports/common'
 export * from './ports/note-store'
@@ -11,5 +12,6 @@ export * from './ports/version-control'
 export * from './ports/terminal-host'
 export * from './ports/search'
 export * from './ports/file-watcher'
+export * from './ports/note-index'
 
 export * from './schemas/index'
