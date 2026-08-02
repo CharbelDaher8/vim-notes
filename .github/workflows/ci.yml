@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run irrelevant. Cancelling
+# it keeps the queue short without hiding anything: main is excluded, so no
+# push to the default branch ever goes unverified.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Not the default shell. GitHub's is `bash -e {0}`, which has no pipefail,
+    # so `pnpm install | tail` reports the exit code of `tail` -- always zero --
+    # and a failed install reads as a green step. `shell: bash` is
+    # `bash --noprofile --norc -eo pipefail {0}`, which fails on the real
+    # command. Nothing below pipes a build step anyway; this is the backstop.
+    shell: bash
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # pnpm comes from the `packageManager` field, so the version here always
+      # matches the one the lockfile was written by.
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Locate the pnpm store
+        id: store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      # Retried, and reported as its own failure when it gives up.
+      #
+      # The registry has been genuinely unreliable from this project's network:
+      # installs take minutes and occasionally fail outright fetching a platform
+      # binary. A transient fetch failure is not a broken commit, and a red X
+      # that says "CI failed" on a working change trains everyone to ignore CI.
+      # Timeouts and retry counts live in pnpm-workspace.yaml so they apply
+      # locally too; this loop covers the case where even those give up.
+      - name: Install dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            echo "::warning title=Install failed::attempt ${attempt} of 3 could not fetch dependencies"
+            sleep $((attempt * 20))
+          done
+          echo "::error title=Dependency install failed::three attempts failed to fetch dependencies. This is an install failure, not a test failure -- the commit has not been verified either way."
+          exit 1
+
+      # typecheck, lint, format:check, test -- see the root package.json. One
+      # script so that CI and `pnpm verify` on a laptop cannot drift apart.
+      - name: Verify
+        run: pnpm verify
+
+  # Split out because it needs git and nothing else: no node, no install, no
+  # registry. It therefore still reports on a day when the registry is down,
+  # which is exactly when you want to know the deploy path is intact.
+  post-receive-hook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Exercise the hub post-receive hook
+        run: ./deploy/test-hook.sh

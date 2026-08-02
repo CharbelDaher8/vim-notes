@@ -1,0 +1,11 @@
+# Prettier already skips everything in .gitignore, so this file is only for
+# things that are tracked but must not be reformatted.
+
+# Written by pnpm, in pnpm's own style. Formatting it would put `format:check`
+# in a fight it cannot win: prettier rewrites the file, the next `pnpm install`
+# rewrites it back, and CI fails on a lockfile nobody edited.
+pnpm-lock.yaml
+
+# Generated icon set for the desktop bundle (binary, and derived from
+# packages/desktop/icons/app-icon.png).
+packages/desktop/src-tauri/icons/

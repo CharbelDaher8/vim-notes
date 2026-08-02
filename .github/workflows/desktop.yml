@@ -1,0 +1,101 @@
+name: desktop
+
+# Not run on every push. A Tauri build compiles the whole Rust dependency tree
+# on three runners and takes tens of minutes; the shell changes rarely, and the
+# things that break it (Rust, tauri.conf.json, the icon step) all live under
+# packages/desktop.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'packages/desktop/**'
+      - '.github/workflows/desktop.yml'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Also gives the retry loop below a real shell on the Windows runner.
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    strategy:
+      # One platform failing should not hide whether the others work -- most of
+      # what breaks a desktop build is platform-specific.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-apple-silicon
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: macos-intel
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows-x64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Compiling Tauri from scratch is the slowest thing in this repository by
+      # a wide margin. Keyed on the lockfile and the target triple.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop/src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --frozen-lockfile; then
+              exit 0
+            fi
+            echo "::warning title=Install failed::attempt ${attempt} of 3 could not fetch dependencies"
+            sleep $((attempt * 20))
+          done
+          echo "::error title=Dependency install failed::three attempts failed to fetch dependencies. This is an install failure, not a build failure."
+          exit 1
+
+      # The platform icon set is generated rather than committed, so it has to
+      # exist before the bundler runs or the build fails on a missing icon.
+      - name: Generate platform icons
+        run: pnpm --filter @vim-notes/desktop exec tauri icon icons/app-icon.png --output src-tauri/icons
+
+      # The web client is built by `beforeBuildCommand` in tauri.conf.json, so
+      # there is one definition of how the frontend is produced rather than two
+      # that can drift.
+      #
+      # Deliberately unsigned (DECISIONS §10): no APPLE_CERTIFICATE or
+      # WINDOWS_CERTIFICATE secrets are set, so macOS gets an ad-hoc signature
+      # and Windows an unsigned installer. Right-click-open once on macOS,
+      # click through SmartScreen once on Windows.
+      - name: Build the desktop app
+        run: pnpm --filter @vim-notes/desktop exec tauri build --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vim-notes-${{ matrix.artifact }}
+          path: packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/
+          # A silently empty artifact is worse than a red build: it looks like
+          # a release happened.
+          if-no-files-found: error
