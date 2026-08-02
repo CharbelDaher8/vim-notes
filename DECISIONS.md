@@ -61,6 +61,11 @@ the laptop can now push from anywhere rather than only from the tailnet.
 - **A third party is now in the loop.** GitHub being down means no sync — though
   local editing, history and search are all unaffected, because every clone is a
   full repository.
+- **A third party now stores the plaintext of every note.** The repository is
+  private, but this is a different kind of change from the availability one
+  above and worth stating rather than leaving to be inferred: §1's pitch is that
+  the data outlives the app, and it now also lives somewhere its owner does not
+  control. Under the old topology every copy was on hardware the user owned.
 - **A credential now exists.** An SSH deploy key, scoped to that one repository,
   mounted into the container and never baked into the image.
 
@@ -256,4 +261,14 @@ why reconstructing it by matching label text is a trap.
   something you look at, not something that arrives.
 - **Offline editing** in the desktop app is deferred. Git does most of the work,
   but sync and conflict UI are real effort and not yet justified.
-- **GitHub mirror** of the hub for offsite backup — probably worth it, not done.
+- **Branch protection on the remote** is not enabled, and probably should be.
+  The server holds a deploy key with write access, so a compromised box can
+  force-push and rewrite the history of the one copy that exists to be the
+  backup (§2). Protecting the default branch against force-pushes and deletions
+  means the offsite copy cannot be destroyed by the machine most likely to be
+  breached. It is a setting on the repository, not something this codebase can
+  do for you.
+- **Encryption at rest** for the notes on GitHub has not been considered. It
+  would answer the plaintext-with-a-third-party point in §2, and it would cost
+  the thing that makes the remote useful — `git clone` giving you readable
+  markdown on any machine, and GitHub's own web view and search.
