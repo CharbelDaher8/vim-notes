@@ -1,0 +1,29 @@
+{
+  "name": "@vim-notes/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsup src/main.ts --format esm --target node22 --clean --sourcemap",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.3.0",
+    "@trpc/server": "catalog:",
+    "@vim-notes/core": "workspace:*",
+    "chokidar": "^5.0.0",
+    "fastify": "^5.11.0",
+    "node-pty": "^1.1.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.4"
+  }
+}

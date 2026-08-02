@@ -1,0 +1,28 @@
+packages:
+  - "packages/*"
+
+# Versions shared by more than one package live here so they can never drift
+# apart -- notably zod and the tRPC pair, which must match across the wire.
+catalog:
+  zod: ^4.4.3
+  "@trpc/server": ^11.18.0
+  "@trpc/client": ^11.18.0
+  react: ^19.2.8
+  react-dom: ^19.2.8
+
+# Native/postinstall builds must be approved explicitly in pnpm 11.
+# node-pty compiles pty bindings; esbuild fetches a platform binary.
+allowBuilds:
+  esbuild: true
+  node-pty: true
+
+# pnpm 11 quarantines very fresh releases as supply-chain protection. tsx is
+# needed at a version newer than the default window.
+minimumReleaseAgeExclude:
+  - tsx@4.23.4
+
+# The npm registry has been unreliable from this network; the defaults give up
+# too early on the larger platform binaries.
+fetchTimeout: 300000
+fetchRetries: 5
+fetchRetryMaxtimeout: 120000
