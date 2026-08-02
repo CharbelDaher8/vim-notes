@@ -3,6 +3,7 @@
 
 export * from './domain/note-path'
 export * from './domain/conflict'
+export * from './domain/errors'
 
 export * from './ports/common'
 export * from './ports/note-store'

@@ -1,5 +1,6 @@
 import type { FileWatcher, NoteStore, Search, TerminalHost, VersionControl } from '@vim-notes/core'
-import { initTRPC } from '@trpc/server'
+import { NotFoundError, PathEscapeError, PathOccupiedError } from '@vim-notes/core'
+import { initTRPC, TRPCError } from '@trpc/server'
 
 /**
  * The ports, handed to procedures through tRPC's context.
@@ -19,6 +20,47 @@ export interface AppContext {
 
 const t = initTRPC.context<AppContext>().create()
 
+/**
+ * Translate the port error taxonomy into status codes.
+ *
+ * Without this every store failure reaches the client as an opaque 500, and
+ * "that note is gone" becomes indistinguishable from "the server is broken" --
+ * which the UI has to tell apart to decide between showing a message and
+ * retrying.
+ *
+ * PathEscapeError is deliberately NOT reported accurately. It is unreachable
+ * through a genuine NotePath, so hitting it means a forged branded string or a
+ * symlink pointing out of the notes tree. The caller learns nothing; the log
+ * gets a loud line.
+ */
+function mapPortError(cause: unknown): TRPCError | null {
+  if (cause instanceof NotFoundError) {
+    return new TRPCError({ code: 'NOT_FOUND', message: cause.message, cause })
+  }
+
+  if (cause instanceof PathOccupiedError) {
+    return new TRPCError({ code: 'CONFLICT', message: cause.message, cause })
+  }
+
+  if (cause instanceof PathEscapeError) {
+    console.error('[security] path escape attempt:', cause.message)
+    return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'request refused', cause })
+  }
+
+  return null
+}
+
+const withMappedErrors = t.middleware(async ({ next }) => {
+  const result = await next()
+
+  if (!result.ok) {
+    const mapped = mapPortError(result.error.cause ?? result.error)
+    if (mapped !== null) throw mapped
+  }
+
+  return result
+})
+
 export const router = t.router
-export const procedure = t.procedure
+export const procedure = t.procedure.use(withMappedErrors)
 export const createCallerFactory = t.createCallerFactory
