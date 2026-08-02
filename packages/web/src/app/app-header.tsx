@@ -2,6 +2,7 @@ import { notePathBasename, notePathParent } from '@vim-notes/core'
 
 import { useVimMode } from '../features/editor/use-vim-mode'
 import { useThemeStore } from '../shared/theme'
+import { useMediaQuery } from '../shared/use-media-query'
 import { Keyboard, Menu, Moon, Sun } from '../shared/ui/icons'
 import { useWorkspaceStore } from '../shared/workspace-store'
 import { DevTools } from './dev-tools'
@@ -39,6 +40,8 @@ export function AppHeader() {
         )}
       </h1>
 
+      <TerminalLink />
+
       <DevTools />
 
       <button
@@ -66,6 +69,28 @@ export function AppHeader() {
         {preference === 'dark' ? <Moon /> : <Sun />}
       </button>
     </header>
+  )
+}
+
+/**
+ * Only offered where there is a keyboard.
+ *
+ * `/term` is real nvim in a pty; DECISIONS.md §3 and §4 are explicit that it is
+ * the desktop client and that a touch device gets CodeMirror instead. Offering
+ * it on a phone would be offering modal editing with no Esc key.
+ *
+ * A plain link, not a client-side transition: the two routes are closer to two
+ * applications than two pages, and a full load means `/` is not still resident
+ * behind a terminal session that may run for hours.
+ */
+function TerminalLink() {
+  const hasKeyboard = useMediaQuery('(hover: hover) and (pointer: fine)')
+  if (!hasKeyboard) return null
+
+  return (
+    <a className="app__term-link" href="/term" title="Open nvim in a terminal">
+      /term
+    </a>
   )
 }
 

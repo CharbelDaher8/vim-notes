@@ -15,6 +15,7 @@ import { createAutosaveScheduler } from './autosave'
 import type { ConflictAction } from './conflict-model'
 import type { EditorHandle } from './create-editor'
 import { useEditorStore } from './editor-store'
+import { setLocalWriteListener } from './local-writes'
 
 export interface NoteBuffer {
   /** Called from CodeMirror's update listener for user-originated changes. */
@@ -239,6 +240,26 @@ export function useNoteBuffer(handleRef: RefObject<EditorHandle | null>): NoteBu
       cancelled = true
     }
   }, [handleRef, openPath, platform])
+
+  /**
+   * Another part of this app -- the tasks panel ticking a checkbox -- wrote the
+   * file this buffer is showing. The watcher cannot deliver that (see
+   * local-writes.ts), and ignoring it would leave the buffer holding a baseline
+   * hash that is already stale.
+   */
+  useEffect(() => {
+    setLocalWriteListener((path) => {
+      const store = useEditorStore.getState()
+      if (store.path !== path) return
+
+      // A dirty buffer is never touched, exactly as for nvim's writes: the user
+      // is told, and chooses.
+      if (store.dirty) store.setExternal({ reason: 'modified', at: Date.now() })
+      else void reloadFromDisk()
+    })
+
+    return () => setLocalWriteListener(null)
+  }, [reloadFromDisk])
 
   // --- Not losing work -------------------------------------------------------
 

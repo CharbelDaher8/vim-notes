@@ -130,6 +130,125 @@
   color: var(--text-faint);
 }
 
+/* --- Wikilinks ------------------------------------------------------------ */
+
+.cm-wikilink {
+  color: var(--md-link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--md-link) 35%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/*
+ * A link to a note nobody has written is not broken -- it is how a note gets
+ * created in a wiki. So it is dimmed and dashed rather than coloured like an
+ * error: legible, obviously different, and not alarming.
+ */
+.cm-wikilink--missing {
+  color: var(--text-muted);
+  text-decoration-style: dashed;
+  text-decoration-color: var(--border-strong);
+}
+
+/* --- Backlinks ------------------------------------------------------------ */
+
+.backlinks {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+
+.backlinks__header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.1rem;
+  padding: 0 clamp(0.75rem, 4vw, 1.25rem);
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.backlinks__header:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.backlinks__header > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.backlinks__title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.backlinks__count {
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  background: var(--surface-active);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.backlinks__list {
+  /* Capped rather than free: this is a footnote to the note, and it must not
+     be able to push the buffer off a phone screen. */
+  max-height: min(30vh, 12rem);
+  margin: 0;
+  padding: 0 0 0.35rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.backlinks__link {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 1.9rem;
+  padding: 0.1rem clamp(0.75rem, 4vw, 1.25rem) 0.1rem 2rem;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.backlinks__link:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.backlinks__from {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.backlinks__line {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+/* Same rule as the status line: with the keyboard up, the note wins. */
+:root[data-keyboard='open'] .backlinks {
+  display: none;
+}
+
 /* --- Banner --------------------------------------------------------------- */
 
 .banner {

@@ -1,0 +1,348 @@
+/*
+ * Three colour roles for four node kinds, on purpose.
+ *
+ * Kind is carried by shape -- circle, ring, square, triangle -- so colour is
+ * free to say something else: what is substance (a note), what is scaffolding
+ * (a day, a note that does not exist yet), and what is asking to be done (a
+ * todo or a reminder). Todos and reminders share a colour and differ by
+ * silhouette, which is the whole discipline in one line: someone who cannot
+ * tell the tones apart still sees four kinds, and someone in high contrast mode
+ * sees them too.
+ */
+
+.graph {
+  --graph-note: var(--accent);
+  --graph-structure: var(--text-faint);
+  --graph-task: var(--warn);
+  --graph-edge: var(--border-strong);
+
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface);
+}
+
+/* --- The canvas ----------------------------------------------------------- */
+
+.graph__surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* The browser must not scroll or pinch-zoom the page here: this element does
+     both itself, and letting it do neither is what makes that possible. */
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.graph__surface:active {
+  cursor: grabbing;
+}
+
+/* Inset, because the outline sits on the clipping edge of the element. */
+.graph__surface:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.graph__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Edges ---------------------------------------------------------------- */
+
+.graph__edge {
+  fill: none;
+  stroke: var(--graph-edge);
+  stroke-width: 1;
+}
+
+/* Structural edges recede; the wikilinks someone actually drew come forward. */
+.graph__edge[data-kind='contains'] {
+  opacity: 0.5;
+}
+
+.graph__edge[data-kind='day'] {
+  opacity: 0.65;
+}
+
+/*
+ * Dashed, not red, not hidden. A link to a note that does not exist yet is an
+ * ordinary state in a wiki -- it is how you leave yourself a note-shaped hole --
+ * so it reads as "not here yet" rather than as something broken.
+ */
+.graph__edge[data-kind='unresolved'] {
+  stroke-dasharray: 3 4;
+  opacity: 0.75;
+}
+
+.graph__arrow {
+  fill: var(--graph-edge);
+}
+
+/* --- Nodes ---------------------------------------------------------------- */
+
+.graph__canvas .graph__node {
+  cursor: pointer;
+}
+
+.graph__canvas .graph__node[aria-disabled] {
+  cursor: default;
+}
+
+/* Invisible, and the reason a 6px node is hittable with a thumb. */
+.graph__hit {
+  fill: transparent;
+}
+
+.graph__glyph {
+  fill: var(--graph-structure);
+  transition: fill var(--motion-fast);
+}
+
+.graph__node[data-tone='note'] .graph__glyph {
+  fill: var(--graph-note);
+}
+
+.graph__node[data-tone='task'] .graph__glyph {
+  fill: var(--graph-task);
+}
+
+/* A day is a container, so it is drawn as one: an open ring, larger than the
+   things it holds. */
+.graph__node[data-kind='day'] .graph__glyph {
+  fill: none;
+  stroke: var(--graph-structure);
+  stroke-width: 2.5;
+}
+
+/* Outlined and dashed: present in the graph, absent from the disk. */
+.graph__node[data-missing] .graph__glyph {
+  fill: none;
+  stroke: var(--graph-structure);
+  stroke-width: 1.25;
+  stroke-dasharray: 2.5 2.5;
+}
+
+/* Three signals at once, so none of them has to carry it alone: the whole node
+   fades, the label is struck through, and the square gains a tick. */
+.graph__node[data-done] {
+  opacity: 0.6;
+}
+
+.graph__tick {
+  fill: none;
+  stroke: var(--surface);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- Selection and focus -------------------------------------------------- */
+
+.graph__ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+/* The note currently open in the editor, so the graph and the buffer agree. */
+.graph__node[data-open] .graph__ring {
+  opacity: 1;
+}
+
+/* Replaces the default outline rather than adding to it: an outline draws the
+   bounding box, which around a circle is a rectangle. */
+.graph__node:focus {
+  outline: none;
+}
+
+.graph__node:focus .graph__ring {
+  opacity: 1;
+  stroke-dasharray: 3 3;
+}
+
+@media (hover: hover) {
+  .graph__node:hover .graph__ring {
+    opacity: 0.4;
+  }
+}
+
+/* --- Labels --------------------------------------------------------------- */
+
+.graph__label {
+  fill: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  text-anchor: middle;
+  pointer-events: none;
+  /* A halo of the page colour, so a label crossing an edge stays readable
+     without a filled rectangle sitting behind it. */
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.graph__node[data-done] .graph__label {
+  text-decoration: line-through;
+}
+
+/*
+ * Past a few hundred nodes the labels stop being readable and start being a
+ * grey smear, so they are dropped -- with `display: none` rather than
+ * `visibility`, which is what keeps the browser from laying out a thousand
+ * pieces of text nobody can read. Pointing at one still names it.
+ */
+.graph__nodes:not([data-labelled]) .graph__label {
+  display: none;
+}
+
+.graph__nodes:not([data-labelled]) .graph__node:hover .graph__label,
+.graph__nodes:not([data-labelled]) .graph__node:focus .graph__label {
+  display: inline;
+}
+
+/* --- Overlays ------------------------------------------------------------- */
+
+.graph__overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 2rem 1.5rem;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  text-align: center;
+  /* Never in the way of a drag: the surface underneath is the widget. */
+  pointer-events: none;
+}
+
+.graph__overlay p {
+  max-width: 32rem;
+  margin: 0;
+}
+
+.graph__empty-title {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.graph__overlay code {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
+.graph__controls {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.graph__controls .icon-button {
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+}
+
+/* --- Footer --------------------------------------------------------------- */
+
+.graph__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  flex: none;
+  padding: 0.45rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+/* Not decoration: encoding kind as silhouette only works if the silhouettes
+   are named somewhere. */
+.graph__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.graph__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.graph__legend-glyph {
+  flex: none;
+  overflow: visible;
+}
+
+.graph__meta {
+  margin: 0;
+}
+
+.graph__settling {
+  font-style: italic;
+}
+
+/*
+ * Forced colours replace the palette outright, which is exactly the case the
+ * shape vocabulary exists for: everything below collapses to two colours and
+ * all four kinds are still distinguishable.
+ */
+@media (forced-colors: active) {
+  .graph__glyph {
+    fill: CanvasText;
+    stroke: CanvasText;
+  }
+
+  .graph__node[data-kind='day'] .graph__glyph,
+  .graph__node[data-missing] .graph__glyph {
+    fill: Canvas;
+  }
+
+  .graph__edge {
+    stroke: CanvasText;
+  }
+
+  .graph__arrow {
+    fill: CanvasText;
+  }
+
+  .graph__tick {
+    stroke: Canvas;
+  }
+
+  .graph__ring {
+    stroke: Highlight;
+  }
+
+  .graph__label {
+    fill: CanvasText;
+    stroke: Canvas;
+  }
+}

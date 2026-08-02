@@ -1,7 +1,8 @@
 import { Text } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 
-import { buildMarkdownDecorations } from './markdown-decorations'
+import { isSafeExternalUrl } from '../../platform/external-url'
+import { buildMarkdownDecorations, findLinkAt } from './markdown-decorations'
 
 interface Decorated {
   from: number
@@ -163,5 +164,42 @@ describe('robustness', () => {
     for (let i = 1; i < found.length; i += 1) {
       expect(found[i]?.from).toBeGreaterThanOrEqual(found[i - 1]?.from ?? 0)
     }
+  })
+})
+
+describe('findLinkAt', () => {
+  const line = 'see [the docs](https://example.com) and https://bare.example/x here'
+
+  it('finds the url of a markdown link from anywhere in it', () => {
+    expect(findLinkAt(line, line.indexOf('the docs'))).toBe('https://example.com')
+    expect(findLinkAt(line, line.indexOf('['))).toBe('https://example.com')
+    expect(findLinkAt(line, line.indexOf('example.com'))).toBe('https://example.com')
+  })
+
+  it('finds a bare url', () => {
+    expect(findLinkAt(line, line.indexOf('https://bare'))).toBe('https://bare.example/x')
+  })
+
+  it('returns null off a link', () => {
+    expect(findLinkAt(line, 0)).toBeNull()
+    expect(findLinkAt(line, line.length - 1)).toBeNull()
+    expect(findLinkAt('just prose', 4)).toBeNull()
+  })
+
+  it('picks the right link when a line has several', () => {
+    const many = '[a](https://a.example) [b](https://b.example)'
+    expect(findLinkAt(many, many.indexOf('a]'))).toBe('https://a.example')
+    expect(findLinkAt(many, many.indexOf('b]'))).toBe('https://b.example')
+  })
+
+  it('hands a dangerous scheme to the gate rather than filtering it here', () => {
+    // Extraction and safety are deliberately separate: this finds what was
+    // clicked, `isSafeExternalUrl` decides whether it may be opened. What
+    // matters is that the pair refuses it -- a note is untrusted input, and a
+    // `git pull` can put anything in one.
+    const found = findLinkAt('[x](javascript:alert(1))', 1)
+
+    expect(found).not.toBeNull()
+    expect(isSafeExternalUrl(found ?? '')).toBe(false)
   })
 })

@@ -15,6 +15,8 @@ import {
   notePathContains,
   notePathParent,
   parseNotePath,
+  type AnnotationFilter,
+  type AnnotationRecord,
   type ChangeOrigin,
   type ContentHash,
   type ExpectedVersion,
@@ -22,8 +24,10 @@ import {
   type FileChangeKind,
   type ForceWrite,
   type NoteDocument,
+  type NoteGraph,
   type NoteMetadata,
   type NotePath,
+  type ResolvedLink,
   type SearchHit,
   type SearchQuery,
   type TreeEntry,
@@ -32,6 +36,13 @@ import {
 } from '@vim-notes/core'
 
 import { byteLength, hashContent } from './content-hash'
+import {
+  deriveAnnotations,
+  deriveBacklinks,
+  deriveGraph,
+  isIndexable,
+  type IndexedNote,
+} from './derive-index'
 import type { Platform } from './platform'
 import { documentHost } from './document-host'
 
@@ -211,6 +222,25 @@ export class InMemoryPlatform implements Platform {
     }
   }
 
+  // --- Derived views ---------------------------------------------------------
+  // Computed with core's parser rather than canned, so the panels behave the
+  // same offline as they do against the server index. See derive-index.ts.
+
+  async annotations(filter?: AnnotationFilter): Promise<AnnotationRecord[]> {
+    await this.#settle()
+    return deriveAnnotations(this.#notes(), filter)
+  }
+
+  async backlinks(path: NotePath): Promise<ResolvedLink[]> {
+    await this.#settle()
+    return deriveBacklinks(this.#notes(), path)
+  }
+
+  async graph(): Promise<NoteGraph> {
+    await this.#settle()
+    return deriveGraph(this.#notes())
+  }
+
   // --- Dev affordances -------------------------------------------------------
   // These have no counterpart on the real platform; they stand in for nvim in
   // a pty writing to the same directory.
@@ -228,6 +258,22 @@ export class InMemoryPlatform implements Platform {
   }
 
   // --- Internals -------------------------------------------------------------
+
+  /**
+   * Only the markdown. A `.png` dropped in the notes directory holds no tasks,
+   * and running it through a line parser would put binary noise in the panel.
+   * The server's index draws the same line, which is why `[[diagram.png]]`
+   * resolves to nothing on both.
+   */
+  #notes(): IndexedNote[] {
+    const notes: IndexedNote[] = []
+
+    for (const [path, record] of this.#files) {
+      if (isIndexable(path)) notes.push({ path, content: record.content })
+    }
+
+    return notes
+  }
 
   #put(path: NotePath, content: string): FileRecord {
     const record: FileRecord = { content, hash: hashContent(content), modifiedAt: this.#now() }

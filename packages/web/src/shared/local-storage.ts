@@ -26,4 +26,5 @@ export const SETTING_KEYS = {
   theme: 'vim-notes:theme',
   vimMode: 'vim-notes:vim-mode',
   sidebarWidth: 'vim-notes:sidebar-width',
+  backlinks: 'vim-notes:backlinks',
 } as const

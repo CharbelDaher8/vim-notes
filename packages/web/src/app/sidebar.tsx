@@ -1,37 +1,48 @@
 import { SearchPane } from '../features/search/search-pane'
+import { TasksPane } from '../features/tasks/tasks-pane'
 import { TreePane } from '../features/tree/tree-pane'
-import { SearchIcon } from '../shared/ui/icons'
-import { useWorkspaceStore } from '../shared/workspace-store'
+import { CheckSquare, SearchIcon } from '../shared/ui/icons'
+import { useWorkspaceStore, type SidebarPanel } from '../shared/workspace-store'
 
 /**
  * A persistent column on a wide screen and an overlay drawer on a narrow one.
  * Same markup either way -- the difference is entirely CSS, which keeps the
  * tree's state and focus intact when a phone is rotated into landscape.
  */
+
+const PANELS = [
+  { id: 'files', label: 'Files', icon: null },
+  { id: 'search', label: 'Search', icon: SearchIcon },
+  { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+] as const satisfies ReadonlyArray<{
+  id: SidebarPanel
+  label: string
+  icon: ((props: { size?: number }) => React.ReactElement) | null
+}>
+
 export function Sidebar() {
   const drawerOpen = useWorkspaceStore((state) => state.drawerOpen)
   const panel = useWorkspaceStore((state) => state.sidebarPanel)
 
   return (
-    <aside className="sidebar" data-open={drawerOpen || undefined} aria-label="Notes and search">
+    <aside
+      className="sidebar"
+      data-open={drawerOpen || undefined}
+      aria-label="Notes, search and tasks"
+    >
       <nav className="sidebar__tabs">
-        <button
-          type="button"
-          className="sidebar__tab"
-          aria-pressed={panel === 'files'}
-          onClick={() => useWorkspaceStore.setState({ sidebarPanel: 'files' })}
-        >
-          Files
-        </button>
-        <button
-          type="button"
-          className="sidebar__tab"
-          aria-pressed={panel === 'search'}
-          onClick={() => useWorkspaceStore.setState({ sidebarPanel: 'search' })}
-        >
-          <SearchIcon size={13} />
-          Search
-        </button>
+        {PANELS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            className="sidebar__tab"
+            aria-pressed={panel === id}
+            onClick={() => useWorkspaceStore.setState({ sidebarPanel: id })}
+          >
+            {Icon === null ? null : <Icon size={13} />}
+            {label}
+          </button>
+        ))}
 
         <button
           type="button"
@@ -43,7 +54,14 @@ export function Sidebar() {
         </button>
       </nav>
 
-      <div className="sidebar__panel">{panel === 'files' ? <TreePane /> : <SearchPane />}</div>
+      {/*
+        Only the selected panel is mounted. The tasks pane queries the index on
+        mount, and keeping all three alive would have it refetching for a panel
+        nobody is looking at every time the notes change.
+      */}
+      <div className="sidebar__panel">
+        {panel === 'files' ? <TreePane /> : panel === 'search' ? <SearchPane /> : <TasksPane />}
+      </div>
     </aside>
   )
 }

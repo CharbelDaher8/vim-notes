@@ -264,3 +264,33 @@ function push(
 function isVisible(from: number, to: number, visible: readonly VisibleRange[]) {
   return visible.some((range) => from <= range.to && to >= range.from)
 }
+
+/**
+ * The URL under a column, or null. Shares the regexes above so what is
+ * clickable is exactly what is painted as a link.
+ *
+ * `column` is a 0-based offset into the line, which is what
+ * `pos - line.from` gives.
+ */
+export function findLinkAt(lineText: string, column: number): string | null {
+  LINK.lastIndex = 0
+  let link: RegExpExecArray | null
+
+  while ((link = LINK.exec(lineText)) !== null) {
+    if (column >= link.index && column <= link.index + link[0].length) {
+      return link[4] ?? null
+    }
+  }
+
+  BARE_URL.lastIndex = 0
+  let bare: RegExpExecArray | null
+
+  while ((bare = BARE_URL.exec(lineText)) !== null) {
+    // Group 1 excludes the optional angle brackets of an autolink.
+    const url = bare[1] ?? ''
+    const start = bare.index + bare[0].indexOf(url)
+    if (column >= start && column <= start + url.length) return url
+  }
+
+  return null
+}

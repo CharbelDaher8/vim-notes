@@ -136,6 +136,29 @@
 
 /* --- Dev tools ------------------------------------------------------------ */
 
+.app__term-link {
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.app__term-link:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+.route-loading {
+  display: grid;
+  place-content: center;
+  height: 100dvh;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
 .devtools {
   position: relative;
 }

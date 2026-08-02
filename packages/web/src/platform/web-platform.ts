@@ -14,15 +14,19 @@
  */
 import {
   FORCE_WRITE,
+  type AnnotationFilter,
+  type AnnotationRecord,
   type CreateDirectoryInput,
   type ExpectedVersion,
   type FileChangeEvent,
   type ForceWrite,
   type MoveNoteInput,
   type NoteDocument,
+  type NoteGraph,
   type NotePath,
   type ReadNoteInput,
   type RemoveNoteInput,
+  type ResolvedLink,
   type SearchHit,
   type SearchQuery,
   type SearchQueryInput,
@@ -51,6 +55,22 @@ export interface NotesApiClient {
     }
   }
   search: { query: (input: SearchQueryInput) => Promise<SearchHit[]> }
+  /**
+   * The derived index. Written against the router that is being built
+   * alongside this -- `annotations`, `backlinks`, `outboundLinks`, `graph`
+   * under `notesIndex` -- rather than waiting for it, on the same terms as the
+   * note declaring `NotesApiClient` above: if the router lands with a different
+   * shape, the mismatch surfaces here and nowhere else.
+   *
+   * `outboundLinks` is deliberately absent. The route exists, but `Platform`
+   * does not expose it and declaring a dependency the client never calls would
+   * constrain the router for nothing.
+   */
+  notesIndex: {
+    annotations: { query: (input: AnnotationFilter) => Promise<AnnotationRecord[]> }
+    backlinks: { query: (input: { path: NotePath }) => Promise<ResolvedLink[]> }
+    graph: { query: () => Promise<NoteGraph> }
+  }
 }
 
 export class WebPlatform implements Platform {
@@ -109,6 +129,18 @@ export class WebPlatform implements Platform {
       under: query.under,
       limit: query.limit ?? 100,
     })
+  }
+
+  annotations(filter: AnnotationFilter = {}): Promise<AnnotationRecord[]> {
+    return this.#client.notesIndex.annotations.query(filter)
+  }
+
+  backlinks(path: NotePath): Promise<ResolvedLink[]> {
+    return this.#client.notesIndex.backlinks.query({ path })
+  }
+
+  graph(): Promise<NoteGraph> {
+    return this.#client.notesIndex.graph.query()
   }
 
   subscribeToChanges(listener: (event: FileChangeEvent) => void): Unsubscribe {

@@ -57,6 +57,19 @@ export const Warning = (props: IconProps) => (
   <Icon {...props} d="M12 4 2.7 20h18.6L12 4Zm0 6v4m0 3h.01" />
 )
 export const Close = (props: IconProps) => <Icon {...props} d="M6 6l12 12M18 6 6 18" />
+export const Check = (props: IconProps) => <Icon {...props} d="M5 12.5 9.5 17 19 7" />
+export const CheckSquare = (props: IconProps) => (
+  <Icon {...props} d="M20 12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h11M9 11l3 3 8-8" />
+)
+export const Bell = (props: IconProps) => (
+  <Icon {...props} d="M7 9a5 5 0 0 1 10 0v3.6l1.5 2.9h-13L7 12.6V9Zm3 9a2 2 0 0 0 4 0" />
+)
+export const LinkIcon = (props: IconProps) => (
+  <Icon
+    {...props}
+    d="M10.5 13.5a3.8 3.8 0 0 0 5.4 0l2.4-2.4a3.8 3.8 0 0 0-5.4-5.4l-1.3 1.4M13.5 10.5a3.8 3.8 0 0 0-5.4 0l-2.4 2.4a3.8 3.8 0 0 0 5.4 5.4l1.3-1.4"
+  />
+)
 
 export function FileIcon(props: IconProps) {
   return <Icon {...props} d="M6 3h8l4 4v14H6V3Zm8 0v4h4" />

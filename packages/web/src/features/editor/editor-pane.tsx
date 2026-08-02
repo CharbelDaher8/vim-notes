@@ -1,7 +1,9 @@
 import { useLayoutEffect, useRef } from 'react'
 
+import { usePlatform } from '../../platform'
 import { useResolvedTheme } from '../../shared/theme'
 import { useWorkspaceStore } from '../../shared/workspace-store'
+import { BacklinksPanel } from './backlinks-panel'
 import { ConflictDialog } from './conflict-dialog'
 import { createEditor, type EditorHandle } from './create-editor'
 import { EditorStatus } from './editor-status'
@@ -12,6 +14,8 @@ import { UnsavedChangesDialog } from './unsaved-changes-dialog'
 import { useExternalChanges } from './use-external-changes'
 import { useNoteBuffer } from './use-note-buffer'
 import { useVisualViewport } from './use-visual-viewport'
+import { useWikiLinks } from './use-wikilinks'
+import { WikiLinkCreateDialog } from './wikilink-create-dialog'
 
 import './editor.css'
 
@@ -28,7 +32,10 @@ export function EditorPane() {
   useExternalChanges(buffer.reloadFromDisk)
   useVisualViewport(() => handleRef.current?.scrollCursorIntoView())
 
+  const wikiLinks = useWikiLinks()
+
   const dark = useResolvedTheme() === 'dark'
+  const openPath = useWorkspaceStore((state) => state.openPath)
   const vimEnabled = useEditorStore((state) => state.vimEnabled)
   const status = useEditorStore((state) => state.status)
   const conflict = useEditorStore((state) => state.conflict)
@@ -37,6 +44,10 @@ export function EditorPane() {
 
   const darkRef = useRef(dark)
   darkRef.current = dark
+
+  const platform = usePlatform()
+  const platformRef = useRef(platform)
+  platformRef.current = platform
 
   /**
    * A layout effect, not a passive one: it has to run before the load effect
@@ -59,6 +70,7 @@ export function EditorPane() {
       onUserChange: () => bufferRef.current.handleUserChange(),
       onSave: () => void bufferRef.current.save(),
       onClose: () => void useWorkspaceStore.getState().closeNote(),
+      onOpenLink: (url) => void platformRef.current.host.openExternal(url),
     })
 
     handleRef.current = handle
@@ -76,6 +88,10 @@ export function EditorPane() {
   useLayoutEffect(() => {
     handleRef.current?.setDark(dark)
   }, [dark])
+
+  useLayoutEffect(() => {
+    handleRef.current?.setWikiLinks(wikiLinks.context)
+  }, [wikiLinks.context])
 
   return (
     <section className="editor" aria-label="Note">
@@ -99,6 +115,8 @@ export function EditorPane() {
         ) : null}
       </div>
 
+      {openPath === null ? null : <BacklinksPanel key={openPath} path={openPath} />}
+
       {vimEnabled ? null : <MarkupBar handleRef={handleRef} />}
 
       <EditorStatus onReopenConflict={() => useEditorStore.getState().setConflictView('choices')} />
@@ -109,6 +127,14 @@ export function EditorPane() {
           busy={saving}
           onResolve={(action) => void buffer.resolveConflict(action)}
           onDismiss={() => useEditorStore.getState().setConflictView('hidden')}
+        />
+      )}
+
+      {wikiLinks.creating === null ? null : (
+        <WikiLinkCreateDialog
+          target={wikiLinks.creating}
+          from={openPath}
+          onClose={wikiLinks.cancelCreate}
         />
       )}
 

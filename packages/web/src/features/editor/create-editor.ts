@@ -35,9 +35,10 @@ import {
 } from '@codemirror/view'
 import { editorCommands, type EditorCommands } from './editor-commands'
 import { editorTheme } from './editor-theme'
-import { markdownDecorations } from './markdown-decorations'
+import { findLinkAt, markdownDecorations } from './markdown-decorations'
 import { loadMarkdownLanguage, markdownLanguageExtension } from './markdown-language'
 import { loadVim, vimExtension } from './vim-extension'
+import { wikiLinksExtension, type WikiLinkContext } from './wikilink-extension'
 
 /**
  * Marks a transaction as coming from the platform rather than the keyboard.
@@ -55,6 +56,8 @@ export interface EditorHandle {
   applyRemoteContent: (content: string) => void
   setVimEnabled: (enabled: boolean) => void
   setDark: (dark: boolean) => void
+  /** Null until the client knows which notes exist; see wikilink-extension.ts. */
+  setWikiLinks: (context: WikiLinkContext | null) => void
   reveal: (line: number, column?: number) => void
   scrollCursorIntoView: () => void
   focus: () => void
@@ -70,6 +73,8 @@ export interface CreateEditorOptions {
   onUserChange: () => void
   onSave: () => void
   onClose: () => void
+  /** Mod-click on a link. Routed through the platform host, never navigated to. */
+  onOpenLink: (url: string) => void
 }
 
 export function createEditor(options: CreateEditorOptions): EditorHandle {
@@ -78,9 +83,11 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
   const themeCompartment = new Compartment()
   const keyboardCompartment = new Compartment()
   const gutterCompartment = new Compartment()
+  const wikiLinkCompartment = new Compartment()
 
   let vimEnabled = options.vimEnabled
   let dark = options.dark
+  let wikiLinks: WikiLinkContext | null = null
 
   const commands: EditorCommands = {
     save: () => options.onSave(),
@@ -111,6 +118,7 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
     // breaking the line. Empty until the chunk lands; see markdown-language.ts.
     languageCompartment.of(markdownLanguageExtension()),
     markdownDecorations,
+    wikiLinkCompartment.of(wikiLinksExtension(wikiLinks)),
     EditorView.lineWrapping,
     drawSelection(),
     dropCursor(),
@@ -138,6 +146,30 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
       // CodeMirror then has to fight over.
       'data-gramm': 'false',
       'data-enable-grammarly': 'false',
+    }),
+
+    /**
+     * Mod-click opens a link. Plain click stays cursor placement -- this is an
+     * editor, and on a touch device every tap would otherwise be a navigation.
+     *
+     * It never lets the webview follow the URL itself: in the Tauri build that
+     * replaces the running application, with no chrome to come back from.
+     */
+    EditorView.domEventHandlers({
+      mousedown: (event, view) => {
+        if (!event.metaKey && !event.ctrlKey) return false
+
+        const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
+        if (position === null) return false
+
+        const line = view.state.doc.lineAt(position)
+        const url = findLinkAt(line.text, position - line.from)
+        if (url === null) return false
+
+        event.preventDefault()
+        options.onOpenLink(url)
+        return true
+      },
     }),
 
     EditorView.updateListener.of((update) => {
@@ -220,6 +252,14 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
       if (next === dark) return
       dark = next
       view.dispatch({ effects: themeCompartment.reconfigure(editorTheme(next)) })
+    },
+
+    setWikiLinks: (context) => {
+      // Guarded like the lazy chunks above: the tree query can resolve after
+      // the pane has unmounted, and dispatching on a destroyed view throws.
+      if (destroyed || context === wikiLinks) return
+      wikiLinks = context
+      view.dispatch({ effects: wikiLinkCompartment.reconfigure(wikiLinksExtension(context)) })
     },
 
     reveal: (line, column = 1) => {
