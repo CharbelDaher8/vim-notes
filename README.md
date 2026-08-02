@@ -19,6 +19,23 @@ Both clients read and write the same `~/notes/*.md` directory. Saves
 auto-commit and push to a private GitHub repo, so a laptop clone is a first-class way to
 work too.
 
+## What it looks like
+
+The same note, in the browser and in real nvim. Both are reading the same file
+on disk — edit it in either, or with any other program, and the other notices.
+
+|                                                     |                                                         |
+| --------------------------------------------------- | ------------------------------------------------------- |
+| ![The editor](docs/screenshots/editor.jpg)          | ![The same note in nvim](docs/screenshots/terminal.jpg) |
+| CodeMirror, with wikilinks and backlinks resolved   | `/term` — actual nvim, your config, your plugins        |
+| ![Tasks](docs/screenshots/tasks.jpg)                | ![The graph](docs/screenshots/graph.jpg)                |
+| `TODO` and `Reminder` lines, grouped by day and due | Notes, days, todos and reminders, and what links them   |
+
+Nothing in those screenshots is stored anywhere but the markdown. The task
+list, the due dates, the links and the graph are all parsed back out of the
+files every time, which is why a `TODO` typed in nvim shows up in the panel
+without nvim knowing this application exists.
+
 ## Layout
 
 ```
