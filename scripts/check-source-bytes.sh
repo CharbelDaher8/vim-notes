@@ -13,10 +13,24 @@
 # carry ESC and BEL as fixture data, which is the whole point of them, and none
 # of those affect git's binary heuristic.
 #
-# The scan is in Python rather than grep on purpose. BSD grep has no -P, so the
-# obvious `grep -qP '[\x00-\x08...]'` fails on macOS -- and with stderr
-# suppressed it fails *silently*, reporting every file clean. A guard that
-# passes vacuously is worse than no guard, since it also removes the suspicion.
+# The scan is a real program rather than a grep one-liner on purpose, and this
+# is the part worth reading before you "simplify" it.
+#
+# Two people wrote this check independently in one afternoon. Both reached for
+# grep. Both got a silently wrong answer, in opposite directions:
+#
+#   grep -qP '[\x00...]'   BSD grep has no -P. With stderr redirected it fails
+#                          silently and reports every file CLEAN.
+#   grep -qU $'\000'       A NUL cannot survive as a shell argument, so the
+#                          pattern arrives empty and matches EVERYTHING --
+#                          reporting every file DIRTY.
+#
+# The common cause is that the byte being searched for is the one byte that
+# cannot be passed through a shell argument. So the pattern has to live inside
+# a program that reads bytes directly, never on a command line.
+#
+# A guard that passes vacuously is worse than no guard, because it also removes
+# the suspicion that would have made someone look.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
