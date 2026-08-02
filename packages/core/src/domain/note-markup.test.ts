@@ -108,6 +108,53 @@ describe('annotations', () => {
   })
 })
 
+describe('line endings', () => {
+  // A repo checked out on Windows with core.autocrlf on has CRLF throughout.
+  // The annotation pattern ends `(.*)$`, and `.` does not match `\r`, so a
+  // trailing carriage return used to make the whole pattern fail -- producing an
+  // empty todo panel rather than an error.
+  const source = [
+    '# Day',
+    'TODO water the plants',
+    '- [x] TODO done already',
+    'Reminder call mum 2026-08-10',
+    'see [[roadmap]] and [[projects/plan|the plan]]',
+    '```',
+    'TODO inside a fence',
+    '```',
+  ]
+
+  const lf = source.join('\n')
+  const crlf = source.join('\r\n')
+
+  it('parses CRLF exactly as it parses LF', () => {
+    expect(parseNoteMarkup(crlf)).toEqual(parseNoteMarkup(lf))
+  })
+
+  it('finds the same annotations either way', () => {
+    expect(annotationsOf(crlf).map((a) => [a.kind, a.text, a.done])).toEqual([
+      ['todo', 'water the plants', null],
+      ['todo', 'done already', true],
+      ['reminder', 'call mum 2026-08-10', null],
+    ])
+  })
+
+  it('still honours code fences with CRLF', () => {
+    expect(annotationsOf(crlf).some((a) => a.text.includes('fence'))).toBe(false)
+  })
+
+  it('leaves no carriage return in extracted text', () => {
+    for (const annotation of annotationsOf(crlf)) expect(annotation.text).not.toContain('\r')
+    for (const link of linksOf(crlf)) expect(link.target).not.toContain('\r')
+  })
+
+  it('handles a lone CR without inventing lines', () => {
+    // Classic-Mac endings are not supported and should not be: splitting on a
+    // bare \r would break any note legitimately containing one.
+    expect(annotationsOf('TODO a\rTODO b')).toHaveLength(0)
+  })
+})
+
 describe('wikilinks', () => {
   it('parses a plain link', () => {
     expect(linksOf('see [[roadmap]] for more')[0]).toMatchObject({

@@ -87,7 +87,15 @@ export function parseNoteMarkup(content: string): NoteMarkup {
 
   let fence: string | null = null
 
-  content.split('\n').forEach((raw, index) => {
+  // Split on either ending, so a `\r` never survives into a line.
+  //
+  // This is not cosmetic. The annotation pattern ends `(.*)$`, and in JavaScript
+  // `.` does not match `\r` while an unanchored `$` only matches the very end of
+  // the string -- so a single trailing carriage return made the whole pattern
+  // fail and silently dropped every task in the note. A repository checked out
+  // on Windows with core.autocrlf on is exactly that case, and the symptom is an
+  // empty todo panel rather than an error.
+  content.split(/\r?\n/).forEach((raw, index) => {
     const line = index + 1
 
     // Code blocks are skipped entirely. A shell snippet containing `# TODO` is
