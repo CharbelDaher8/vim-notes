@@ -166,10 +166,61 @@ would have lost its entire audience and this would be a phone-first PWA.
 password-protected public endpoint behind Caddy is a configuration change rather
 than a rewrite.
 
+## 12. Todos, reminders and links are parsed, never stored
+
+A line beginning `TODO` or `Reminder` becomes a task; `[[wikilinks]]` connect
+notes; a note whose filename looks like a date is a day. All of it is recomputed
+from the markdown, and the index owns nothing.
+
+**Why:** it is the only design where a TODO typed in nvim in the pty appears in
+the panel without nvim knowing this application exists. It also cannot drift out
+of sync with the file, and deleting the index is a no-op rather than data loss —
+the same property §1 buys for the notes themselves.
+
+**Rejected:** a tasks table alongside the notes. Faster to query and sortable by
+anything, but it makes the file and the database two sources of truth that
+disagree the moment anything writes outside the app — which is precisely the
+thing this app is built around.
+
+**Consequences accepted:**
+
+- Keywords are anchored to the start of a line. An unanchored match would claim
+  every sentence that mentions the word.
+- Fenced code blocks are skipped: a shell snippet containing `# TODO` is a
+  quotation, and hoovering it into a task list would make the feature
+  untrustworthy the first time it happened.
+- Checkbox state is three-valued. `- [ ] TODO x` is open, `- [x] TODO x` is
+  done, and a bare `TODO x` was never asked — which decides whether ticking it
+  rewrites a checkbox or inserts one.
+- Ticking a box in the panel **edits the markdown**, through the same
+  conflict-checked write path as everything else. There is nowhere else to put
+  the fact.
+- A note is a "day" by filename, not by living under `journal/`, so dailies join
+  up however they are filed.
+
+## 13. The graph lays itself out; no layout library
+
+Force simulation written by hand, rendered as SVG.
+
+**Why:** the layout maths is pure and therefore testable, which is the culture
+here, and a graph library would hand back most of the 84 kB that code-splitting
+xterm off the mobile bundle just saved. The phone is a first-class client
+(§3–§4) and it is the one that pays for every dependency.
+
+**Node ids are content-derived and carry no line number.** That is what stops
+the layout jumping when a line is inserted above a TODO. The line travels as its
+own field on the node instead — see `GraphNode.line`, and the comment there for
+why reconstructing it by matching label text is a trap.
+
 ## Open questions
 
 - **Hosting** is undecided. The stack ships as Docker Compose so the box can be
   chosen later.
+- **Recurring reminders** are not modelled. A reminder has an optional date and
+  nothing else; anything repeating would need syntax that survives round-tripping
+  through plain markdown.
+- **Notifications** for due reminders do not exist. The reminder list is
+  something you look at, not something that arrives.
 - **Offline editing** in the desktop app is deferred. Git does most of the work,
   but sync and conflict UI are real effort and not yet justified.
 - **GitHub mirror** of the hub for offsite backup — probably worth it, not done.
