@@ -36,6 +36,7 @@ import {
   TERMINAL_CLOSE_EXITED,
   TERMINAL_CLOSE_PROTOCOL,
   type ServerControlFrame,
+  type TerminalResync,
   type TerminalWebSocket,
 } from './terminal-socket'
 
@@ -148,7 +149,20 @@ class FakePtySession implements PtySession {
   pauseDepth = 0
   redraws = 0
 
-  replay: ScrollbackReplay = { bytes: Buffer.alloc(0), offset: 0, reset: false }
+  /**
+   * A canned answer for `scrollbackSince`, for the tests that only care what
+   * the socket does with one. Left null, the fake keeps a real bounded ring
+   * instead -- which the catch-up tests need, because what they are checking is
+   * that the socket asks the ring the right question and splices the answer on
+   * correctly, and a canned reply would be testing the canning.
+   */
+  replay: ScrollbackReplay | null = null
+
+  /** Whole chunks are evicted past this, exactly as the real ring does. */
+  scrollbackLimit = Number.POSITIVE_INFINITY
+
+  private readonly ring: Buffer[] = []
+  private ringStart = 0
 
   private readonly byteListeners = new Set<(chunk: Buffer) => void>()
   private readonly exitListeners = new Set<(exit: TerminalExit) => void>()
@@ -185,8 +199,14 @@ class FakePtySession implements PtySession {
     return () => this.exitListeners.delete(listener)
   }
 
-  scrollbackSince(): ScrollbackReplay {
-    return this.replay
+  scrollbackSince(offset: number | null): ScrollbackReplay {
+    if (this.replay !== null) return this.replay
+
+    const held = Buffer.concat(this.ring)
+    if (offset === null || offset < this.ringStart || offset > this.bytesProduced) {
+      return { bytes: held, offset: this.ringStart, reset: true }
+    }
+    return { bytes: held.subarray(offset - this.ringStart), offset, reset: false }
   }
 
   attach(): Unsubscribe {
@@ -220,6 +240,14 @@ class FakePtySession implements PtySession {
   emitBytes(data: string | Buffer): void {
     const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8')
     this.bytesProduced += chunk.length
+
+    this.ring.push(chunk)
+    while (this.bytesProduced - this.ringStart > this.scrollbackLimit && this.ring.length > 1) {
+      const evicted = this.ring.shift()
+      if (evicted === undefined) break
+      this.ringStart += evicted.length
+    }
+
     for (const listener of this.byteListeners) listener(chunk)
   }
 
@@ -316,6 +344,10 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<voi
     if (Date.now() > deadline) throw new Error('timed out waiting for condition')
     await delay(5)
   }
+}
+
+function occurrencesOf(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1
 }
 
 const FAST_RESIZE = { resizeIdleMs: 10, resizeMaxDelayMs: 40 }
@@ -456,7 +488,7 @@ describe('attachTerminalSocket', () => {
     expect(socket.closedWith?.code).toBe(TERMINAL_CLOSE_PROTOCOL)
   })
 
-  it('pauses the pty when the socket falls behind and resumes when it drains', async () => {
+  it('never pauses the pty, however far behind the socket falls', async () => {
     const socket = new FakeSocket()
     const session = new FakePtySession()
     attachTerminalSocket(socket, session, {
@@ -465,19 +497,124 @@ describe('attachTerminalSocket', () => {
       drainPollMs: 5,
     })
 
+    // The regression guard, and the reason the rest of this exists. Pausing is
+    // the obvious way to apply back pressure and it is the wrong one here: a pty
+    // that is stopped when its child exits has its remaining output destroyed by
+    // node-pty 200ms later, and that output is the last screenful.
     socket.bufferedAmount = 500
     session.emitBytes('flood')
-    expect(session.pauseDepth).toBe(1)
+    expect(session.pauseDepth).toBe(0)
 
-    // Still congested: no thrashing between paused and running.
     await delay(20)
-    expect(session.pauseDepth).toBe(1)
+    session.emitBytes('more')
+    expect(session.pauseDepth).toBe(0)
 
     socket.bufferedAmount = 0
-    await waitFor(() => session.pauseDepth === 0)
+    await waitFor(() => socket.output().toString('utf8') === 'floodmore')
+    expect(session.pauseDepth).toBe(0)
   })
 
-  it('never leaves the pty paused when the socket dies mid-congestion', async () => {
+  it('holds congested output in the ring and splices it on when the socket drains', async () => {
+    const socket = new FakeSocket()
+    const session = new FakePtySession()
+    attachTerminalSocket(socket, session, {
+      sendHighWaterMark: 100,
+      sendLowWaterMark: 10,
+      drainPollMs: 5,
+    })
+
+    session.emitBytes('sent while clear;')
+    expect(socket.output().toString('utf8')).toBe('sent while clear;')
+
+    // The chunk that discovers the congestion still goes out -- exceeding the
+    // mark is how it gets discovered. Everything after it is held.
+    socket.bufferedAmount = 500
+    session.emitBytes('discovers;')
+    expect(socket.output().toString('utf8')).toBe('sent while clear;discovers;')
+
+    // Deliberately not sent. They stay in the session's ring, which is now the
+    // only copy, and are served from there on catch-up.
+    session.emitBytes('held;')
+    session.emitBytes('also held;')
+    expect(socket.output().toString('utf8')).toBe('sent while clear;discovers;')
+
+    socket.bufferedAmount = 0
+    await waitFor(() => socket.output().length === session.bytesProduced)
+
+    // Byte-exact and in order: a congested socket costs latency, not output.
+    expect(socket.output().toString('utf8')).toBe('sent while clear;discovers;held;also held;')
+    expect(socket.frameOfType('reset')).toBeUndefined()
+  })
+
+  it('resyncs a client that fell further behind than the ring, and says how much it lost', async () => {
+    const socket = new FakeSocket()
+    const session = new FakePtySession()
+    const resyncs: TerminalResync[] = []
+
+    session.scrollbackLimit = 12
+    attachTerminalSocket(socket, session, {
+      sendHighWaterMark: 100,
+      sendLowWaterMark: 10,
+      drainPollMs: 5,
+      onResync: (resync) => resyncs.push(resync),
+    })
+
+    // 'aaaa' discovers the congestion and is sent; the rest pile into a ring
+    // that only holds twelve bytes, so 'bbbb' is evicted before the socket ever
+    // drains and the client's next byte is gone for good.
+    socket.bufferedAmount = 500
+    for (const chunk of ['aaaa', 'bbbb', 'cccc', 'dddd', 'eeee']) session.emitBytes(chunk)
+
+    socket.bufferedAmount = 0
+    await waitFor(() => socket.frameOfType('reset') !== undefined)
+
+    // Splicing across the gap would hand xterm.js a torn escape sequence and
+    // corrupt the display with nothing on the wire to say so. Saying "clear and
+    // start here" is the honest version, and the loss gets reported rather than
+    // passing for an ordinary repaint.
+    const reset = socket.frameOfType('reset')
+    expect(reset?.dropped).toBe(4)
+    expect(reset?.offset).toBe(8)
+    expect(resyncs).toEqual([{ sessionId: session.id, dropped: 4, offset: 8 }])
+
+    // Everything the ring still had, and nothing spliced over the hole.
+    await waitFor(() => socket.output().toString('utf8') === 'aaaaccccddddeeee')
+  })
+
+  it('flushes what a congested socket missed before reporting the exit', async () => {
+    const socket = new FakeSocket()
+    const session = new FakePtySession()
+    attachTerminalSocket(socket, session, {
+      sendHighWaterMark: 100,
+      sendLowWaterMark: 10,
+      drainPollMs: 5,
+    })
+
+    // The production bug in miniature: nvim finishes drawing its last screen and
+    // quits while the socket is still congested. Announcing the exit without
+    // flushing first would close the connection on top of that screen.
+    socket.bufferedAmount = 500
+    session.emitBytes('|')
+    const beforeTheScreenful = socket.output().length
+
+    session.emitBytes('the last screenful')
+    expect(socket.output()).toHaveLength(beforeTheScreenful)
+
+    session.emitExit({ code: 0 })
+
+    expect(socket.output().toString('utf8')).toBe('|the last screenful')
+    expect(socket.frameOfType('exit')).toEqual({ type: 'exit', code: 0, signal: undefined })
+    expect(socket.closedWith?.code).toBe(TERMINAL_CLOSE_EXITED)
+
+    // Output before goodbye, not after it.
+    const lastBinary = socket.sent.findLastIndex((frame) => Buffer.isBuffer(frame))
+    const exitFrame = socket.sent.findIndex(
+      (frame) => typeof frame === 'string' && frame.includes('"exit"'),
+    )
+    expect(lastBinary).toBeLessThan(exitFrame)
+  })
+
+  it('stops chasing the drain when the socket dies mid-congestion', async () => {
     const socket = new FakeSocket()
     const session = new FakePtySession()
     attachTerminalSocket(socket, session, {
@@ -488,10 +625,20 @@ describe('attachTerminalSocket', () => {
 
     socket.bufferedAmount = 500
     session.emitBytes('flood')
-    expect(session.pauseDepth).toBe(1)
-
     socket.drop()
+
+    // Nothing to give back to the session -- it was never stopped -- and nothing
+    // more should reach a socket that is gone. What this client never caught up
+    // on stays in the ring for the next connection's `?after=`.
     expect(session.pauseDepth).toBe(0)
+    expect(session.attachments).toBe(0)
+
+    const sentByNow = socket.sent.length
+    socket.bufferedAmount = 0
+    session.emitBytes('after the drop')
+    await delay(20)
+
+    expect(socket.sent).toHaveLength(sentByNow)
   })
 
   it('detaches without killing the pty when the socket closes', () => {
@@ -743,7 +890,13 @@ describe('terminalSocketPlugin', () => {
     expect(host.get(sessionId)?.cols).toBe(90)
 
     first.socket.send(new TextEncoder().encode('typed by hand\n'))
-    await waitFor(() => first.output().toString('utf8').includes('typed by hand'))
+
+    // Twice: the tty echoes the keystrokes, and then `cat` writes the line back.
+    // Waiting for only the first copy makes `consumed` below a number the client
+    // has not actually consumed -- the second copy lands after it, the reconnect
+    // correctly replays it, and the test fails for a reason that is entirely its
+    // own. Only shows up when the machine is loaded enough to separate the two.
+    await waitFor(() => occurrencesOf(first.output().toString('utf8'), 'typed by hand') === 2)
 
     first.socket.send(JSON.stringify({ type: 'ping' }))
     await waitFor(() => first.frameOfType('pong') !== undefined)

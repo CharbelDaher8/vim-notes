@@ -3,36 +3,76 @@ import type { Unsubscribe } from '@vim-notes/core'
 import {
   parseServerFrame,
   reconnectDelayMs,
+  resumeUrl,
   TERMINAL_WIRE,
   type ConnectionStatus,
   type TerminalConnection,
   type TerminalExit,
+  type TerminalReset,
 } from './terminal-connection'
+
+/**
+ * The slice of `WebSocket` this module uses.
+ *
+ * Declared structurally so a test can supply a socket it drives by hand. What
+ * needs driving is not the happy path but the order of things -- a `reset`
+ * arriving between two runs of output, a close landing mid-stream -- and a real
+ * socket will not order those on request.
+ */
+export type TerminalSocketEventType = 'open' | 'message' | 'close' | 'error'
+
+/** Only `message` carries a payload; one shape keeps a fake implementable. */
+export interface TerminalSocketEvent {
+  data?: unknown
+}
+
+export interface TerminalSocketLike {
+  binaryType: string
+  readyState: number
+  send(data: string | ArrayBufferView): void
+  close(): void
+  addEventListener(
+    type: TerminalSocketEventType,
+    listener: (event: TerminalSocketEvent) => void,
+  ): void
+}
+
+const OPEN = 1
 
 /**
  * A `TerminalConnection` over a WebSocket, with reconnect.
  *
- * The reconnect is not polish. Core's `TerminalHost` keeps ptys alive across
- * connections precisely so that a phone dropping off wifi mid-edit comes back
- * to the same nvim rather than a fresh one with the buffer lost -- and that
- * guarantee is worth nothing unless the client actually retries.
+ * The reconnect is not polish. The server keeps ptys alive across connections
+ * precisely so that a phone dropping off wifi mid-edit comes back to the same
+ * nvim rather than a fresh one with the buffer lost -- and that guarantee is
+ * worth nothing unless the client retries, naming the session and the offset it
+ * reached so it is sent only what it missed.
  *
  * Input is dropped rather than queued while the socket is down. Replaying
  * keystrokes into a modal editor after a gap is how you end up with half a
  * command executing against the wrong buffer; a dropped keystroke is visibly
  * dropped, which is the honest failure.
  */
-export function createWebSocketConnection(url: string): TerminalConnection {
-  const dataListeners = new Set<(chunk: string) => void>()
+export function createWebSocketConnection(
+  url: string,
+  createSocket: (target: string) => TerminalSocketLike = (target) =>
+    new WebSocket(target) as unknown as TerminalSocketLike,
+): TerminalConnection {
+  const byteListeners = new Set<(chunk: Uint8Array) => void>()
+  const resetListeners = new Set<(reset: TerminalReset) => void>()
   const exitListeners = new Set<(exit: TerminalExit) => void>()
   const statusListeners = new Set<(status: ConnectionStatus) => void>()
 
-  let socket: WebSocket | null = null
+  let socket: TerminalSocketLike | null = null
   let status: ConnectionStatus = 'connecting'
   let attempt = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
   let lastSize: { cols: number; rows: number } | null = null
+
+  /** What the server needs to hand this client a continuation, not a restart. */
+  let sessionId: string | null = null
+  let nextOffset: number | null = null
 
   const setStatus = (next: ConnectionStatus) => {
     if (status === next) return
@@ -40,37 +80,92 @@ export function createWebSocketConnection(url: string): TerminalConnection {
     for (const listener of [...statusListeners]) listener(next)
   }
 
-  const connect = () => {
-    if (disposed) return
+  const emitReset = (dropped: number | null) => {
+    for (const listener of [...resetListeners]) listener({ dropped })
+  }
 
-    socket = new WebSocket(url)
+  const handleFrame = (frame: NonNullable<ReturnType<typeof parseServerFrame>>) => {
+    switch (frame.type) {
+      case 'ready':
+        sessionId = frame.sessionId
+        nextOffset = frame.offset
 
-    socket.addEventListener('open', () => {
-      attempt = 0
-      setStatus('open')
-      // The pty has no idea the window was resized while we were away.
-      if (lastSize !== null) socket?.send(TERMINAL_WIRE.resize(lastSize.cols, lastSize.rows))
-    })
+        // A fresh session has nothing behind it, so clearing is bookkeeping and
+        // there is nothing to report. A *resume* the server could not continue
+        // is different: output exists that this client will never be sent, and
+        // the ready frame does not carry a count of it.
+        if (frame.reset) emitReset(frame.resumed ? null : 0)
+        return
 
-    socket.addEventListener('message', (event: MessageEvent<string>) => {
-      const frame = parseServerFrame(String(event.data))
-      if (frame === null) return
+      case 'reset':
+        // Mid-stream. The ring evicted what this client needed next, so the
+        // bytes after this one do not join onto its grid at all.
+        nextOffset = frame.offset
+        emitReset(frame.dropped)
+        return
 
-      if (frame.type === 'output') {
-        for (const listener of [...dataListeners]) listener(frame.data)
+      case 'exit': {
+        // nvim exited. That is not a dropped connection, so do not retry.
+        setStatus('exited')
+        const exit: TerminalExit = {
+          code: frame.code,
+          ...(frame.signal === undefined ? {} : { signal: frame.signal }),
+        }
+        for (const listener of [...exitListeners]) listener(exit)
         return
       }
 
-      // nvim exited. That is not a dropped connection, so do not retry.
-      setStatus('exited')
-      const exit: TerminalExit = {
-        code: frame.code,
-        ...(frame.signal === undefined ? {} : { signal: frame.signal }),
-      }
-      for (const listener of [...exitListeners]) listener(exit)
+      case 'error':
+        // The server refusing or complaining. It closes the socket itself when
+        // the refusal is fatal, and that close is what drives the retry, so
+        // there is nothing to do here but not treat it as output.
+        return
+
+      case 'pong':
+        return
+    }
+  }
+
+  const connect = () => {
+    if (disposed) return
+
+    const target = resumeUrl(url, {
+      session: sessionId,
+      after: nextOffset,
+      cols: lastSize?.cols ?? null,
+      rows: lastSize?.rows ?? null,
     })
 
-    socket.addEventListener('close', () => {
+    const active = createSocket(target)
+    socket = active
+    // Without this a binary frame arrives as a Blob, which is async to read and
+    // would reorder output against the control frames interleaved with it.
+    active.binaryType = 'arraybuffer'
+
+    active.addEventListener('open', () => {
+      attempt = 0
+      setStatus('open')
+      // The pty has no idea the window was resized while we were away.
+      if (lastSize !== null) active.send(TERMINAL_WIRE.resize(lastSize.cols, lastSize.rows))
+    })
+
+    active.addEventListener('message', (event) => {
+      const data = event.data
+
+      if (typeof data === 'string') {
+        const frame = parseServerFrame(data)
+        if (frame !== null) handleFrame(frame)
+        return
+      }
+
+      const bytes = toBytes(data)
+      if (bytes === null || bytes.length === 0) return
+
+      if (nextOffset !== null) nextOffset += bytes.length
+      for (const listener of [...byteListeners]) listener(bytes)
+    })
+
+    active.addEventListener('close', () => {
       if (disposed || status === 'exited') return
 
       attempt += 1
@@ -78,9 +173,9 @@ export function createWebSocketConnection(url: string): TerminalConnection {
       retryTimer = setTimeout(connect, reconnectDelayMs(attempt))
     })
 
-    socket.addEventListener('error', () => {
+    active.addEventListener('error', () => {
       // `error` is always followed by `close`, which owns the retry.
-      socket?.close()
+      active.close()
     })
   }
 
@@ -99,15 +194,16 @@ export function createWebSocketConnection(url: string): TerminalConnection {
     },
 
     write: (data) => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(TERMINAL_WIRE.input(data))
+      if (socket?.readyState === OPEN) socket.send(TERMINAL_WIRE.input(data))
     },
 
     resize: (cols, rows) => {
       lastSize = { cols, rows }
-      if (socket?.readyState === WebSocket.OPEN) socket.send(TERMINAL_WIRE.resize(cols, rows))
+      if (socket?.readyState === OPEN) socket.send(TERMINAL_WIRE.resize(cols, rows))
     },
 
-    onData: (listener) => subscribe(dataListeners, listener),
+    onBytes: (listener) => subscribe(byteListeners, listener),
+    onReset: (listener) => subscribe(resetListeners, listener),
     onExit: (listener) => subscribe(exitListeners, listener),
     onStatus: (listener) => subscribe(statusListeners, listener),
 
@@ -119,4 +215,13 @@ export function createWebSocketConnection(url: string): TerminalConnection {
       socket = null
     },
   }
+}
+
+/** `ws` and the browser between them can deliver either of these. */
+function toBytes(data: unknown): Uint8Array | null {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  }
+  return null
 }

@@ -8,10 +8,16 @@ export default defineConfig({
     // The dev server binds to the tailnet address the API is on too, so the
     // phone can reach it without a tunnel. See DECISIONS.md §11.
     host: true,
+    // Both of these must match the server: the path in
+    // `packages/server/src/ws/terminal-socket.ts` and the port default in
+    // `packages/server/src/config.ts`. Nothing checks that they agree, and both
+    // had drifted -- the proxy forwarded `/terminal` to port 4000 while the
+    // server served `/term/ws` on 4321, so the dev terminal could not connect
+    // at all. Change either side and change this.
     proxy: {
-      '/trpc': { target: 'http://127.0.0.1:4000', changeOrigin: true, ws: true },
+      '/trpc': { target: 'http://127.0.0.1:4321', changeOrigin: true },
       // The pty socket. Same origin in production, so only dev needs this.
-      '/terminal': { target: 'ws://127.0.0.1:4000', ws: true },
+      '/term/ws': { target: 'ws://127.0.0.1:4321', ws: true },
     },
   },
 

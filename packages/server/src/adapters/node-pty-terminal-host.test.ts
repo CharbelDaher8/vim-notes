@@ -669,6 +669,25 @@ describe('exit and the drain that follows it', () => {
     await session.waitForExit()
   })
 
+  it('still serves its scrollback to an exit listener, and releases it after', async () => {
+    const { session, pty } = await spawnFake()
+
+    const servedOnExit: Buffer[] = []
+    session.onExit(() => servedOnExit.push(session.scrollbackSince(null).bytes))
+
+    pty.emitData(Buffer.from('the last screenful', 'utf8'))
+    pty.emitExit(0)
+    await session.waitForExit()
+
+    // Load-bearing ordering, not housekeeping. A consumer is allowed to be
+    // behind the stream on purpose -- the WebSocket transport falls behind when
+    // a client cannot keep up, and catches up from here -- so releasing the ring
+    // before the exit listeners run would destroy the only copy of exactly the
+    // bytes an exiting session's listener came to collect.
+    expect(servedOnExit.map((bytes) => bytes.toString('utf8'))).toEqual(['the last screenful'])
+    expect(session.scrollbackSince(null).bytes).toHaveLength(0)
+  })
+
   it('keeps the session listed and its scrollback intact until the exit settles', async () => {
     const { host, session, pty } = await spawnFake()
 

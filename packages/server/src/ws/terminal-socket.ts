@@ -34,6 +34,7 @@
  *
  *   { "type": "ready",  "sessionId": "...", "resumed": true, "reset": false,
  *     "offset": 91234, "cols": 120, "rows": 40 }
+ *   { "type": "reset",  "offset": 240128, "dropped": 8192 }
  *   { "type": "exit",   "code": 0, "signal": 15 }
  *   { "type": "error",  "message": "..." }
  *   { "type": "pong" }
@@ -48,6 +49,15 @@
  *
  * `reset: true` means the bytes that follow are not a continuation of anything
  * the client already has, so it must clear its terminal before applying them.
+ *
+ * `reset` as a frame of its own is the same instruction arriving mid-stream:
+ * clear the terminal, apply the binary frames that follow, and continue counting
+ * from `offset`. It is sent when a client fell so far behind that the bytes it
+ * would need next have already been evicted from the session's ring, and
+ * `dropped` says how many bytes of the stream it will never see. Splicing across
+ * that gap instead would hand xterm.js an escape sequence cut mid-parameter and
+ * corrupt the display with nothing on the wire to say so; a terminal that
+ * redraws is ordinary, a terminal quietly rendering garbage is not.
  *
  * ## Connecting
  *
@@ -97,9 +107,24 @@ const DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024
 /**
  * Flow control thresholds. A pty can produce output far faster than a phone on
  * a bad connection can absorb it -- `yes`, or a `:!find /` -- and `ws` will
- * happily queue every unsent byte in memory. Past the high-water mark the pty is
- * paused, which applies real back pressure to the child through the tty buffer,
- * and it resumes once the socket has drained back under the low mark.
+ * happily queue every unsent byte in memory. Past the high-water mark this
+ * socket stops sending, and it catches up from the session's ring once the
+ * socket has drained back under the low mark.
+ *
+ * What it deliberately does *not* do is pause the pty, which is what it used to
+ * do and is the obvious implementation of back pressure. Pausing works by
+ * stopping the child, and node-pty destroys the pty master 200ms after the child
+ * is reaped whether or not anything has read what is left in it -- so a socket
+ * that is congested at the moment nvim exits loses the tail outright. Measured:
+ * of 700 bytes written by a child that exited while paused, zero arrived.
+ *
+ * That trade is the wrong way round for a terminal. Real back pressure protects
+ * memory by sacrificing the newest output, and the newest output is the only
+ * part that matters here: losing the middle of scrollback costs a scroll,
+ * losing the tail costs the result of the command that was just run, silently.
+ * So the newest output is always read, memory is bounded by the ring instead,
+ * and a client that falls further behind than the ring is told so with a `reset`
+ * rather than quietly handed a spliced stream.
  */
 const DEFAULT_SEND_HIGH_WATER_MARK = 2 * 1024 * 1024
 const DEFAULT_SEND_LOW_WATER_MARK = 256 * 1024
@@ -109,10 +134,14 @@ const DEFAULT_DRAIN_POLL_MS = 25
  * Heartbeat interval. A connection that dies without a close frame -- which is
  * precisely what a phone leaving wifi does -- emits no `close` event until TCP
  * gives up, and that can be minutes. In the meantime the corpse still holds an
- * attachment, which keeps the session out of the reaper's reach, and still holds
- * whatever flow-control pause it took, which means the user's *next* connection
- * reattaches to an nvim that has been stopped by a socket nobody is on the other
- * end of. Two missed rounds and the socket is torn down.
+ * attachment, which keeps the session out of the reaper's reach and leaves a
+ * session that nobody is on the other end of looking busy. Two missed rounds and
+ * the socket is torn down.
+ *
+ * It used to matter more than that: a corpse also held the flow-control pause it
+ * had taken, so the next connection reattached to an nvim that had been stopped
+ * by a socket with nobody behind it. Nothing stops the pty any more, so a corpse
+ * now costs a session slot and some ring the next client will not want.
  *
  * Browsers answer a protocol-level ping in the WebSocket implementation itself,
  * so this needs nothing from the client.
@@ -158,9 +187,25 @@ export type ServerControlFrame =
       cols: number
       rows: number
     }
+  | {
+      type: 'reset'
+      /** Stream offset the binary frames after this one start at. */
+      offset: number
+      /** Bytes of the stream evicted before the client could be sent them. */
+      dropped: number
+    }
   | { type: 'exit'; code: number; signal?: number }
   | { type: 'error'; message: string }
   | { type: 'pong' }
+
+/** A client that fell behind the ring and had to be resynced. Worth logging. */
+export interface TerminalResync {
+  sessionId: string
+  /** Bytes of output this client will never see. */
+  dropped: number
+  /** Stream offset it was resumed from. */
+  offset: number
+}
 
 // Dimension bounds come from core's spawn schema rather than being restated, so
 // a resize can never ask for something a spawn would have refused.
@@ -198,6 +243,12 @@ export interface AttachTerminalOptions {
   heartbeatMs?: number
   /** Transport failures have no request to fail; without a sink they vanish. */
   onError?: (error: unknown) => void
+  /**
+   * Where a resync goes to be noticed. Dropping output and asking the client to
+   * redraw looks, from the outside, exactly like an ordinary repaint -- which is
+   * how a data-loss bug becomes unfalsifiable. It gets said out loud instead.
+   */
+  onResync?: (resync: TerminalResync) => void
 }
 
 /**
@@ -211,6 +262,7 @@ export function attachTerminalSocket(
   options: AttachTerminalOptions = {},
 ): () => void {
   const onError = options.onError ?? (() => {})
+  const onResync = options.onResync ?? (() => {})
   const resizeIdleMs = options.resizeIdleMs ?? DEFAULT_RESIZE_IDLE_MS
   const resizeMaxDelayMs = options.resizeMaxDelayMs ?? DEFAULT_RESIZE_MAX_DELAY_MS
   const maxMessageBytes = options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES
@@ -230,7 +282,17 @@ export function attachTerminalSocket(
   let resizeWindowStartedAt = 0
 
   let drainTimer: ReturnType<typeof setInterval> | null = null
-  let paused = false
+  let congested = false
+
+  /**
+   * Stream offset of the first byte this client has not been sent.
+   *
+   * The one piece of state the whole catch-up rests on. While congested nothing
+   * is sent and this stops moving, so it doubles as the mark the session's ring
+   * is asked to resume from -- which is the same question a reconnecting client
+   * asks with `?after=`, answered by the same code.
+   */
+  let nextOffset = 0
 
   function send(data: string | Uint8Array): void {
     if (closed) return
@@ -250,34 +312,77 @@ export function attachTerminalSocket(
     send(JSON.stringify(frame))
   }
 
-  function sendBytes(chunk: Buffer): void {
+  /** Sends output and advances the client's place in the stream, together. */
+  function sendOutput(chunk: Buffer): void {
+    if (chunk.length === 0) return
+
     send(chunk)
-    applyBackPressure()
+    nextOffset += chunk.length
+    checkCongestion()
   }
 
-  function applyBackPressure(): void {
-    if (paused || closed || socket.bufferedAmount <= highWaterMark) return
+  /**
+   * Live output. Dropped on the floor while congested -- on purpose, because the
+   * session's ring is still holding it and `catchUp` will serve it from there.
+   * Nothing is lost that the ring has not evicted, and an eviction is reported.
+   */
+  function forwardOutput(chunk: Buffer): void {
+    if (closed || congested) return
+    sendOutput(chunk)
+  }
 
-    paused = true
-    session.pause()
+  function checkCongestion(): void {
+    if (congested || closed || socket.bufferedAmount <= highWaterMark) return
+
+    congested = true
 
     // `ws` has no drain event, so the socket is polled while congested. The
     // timer only exists during congestion, which on any sane connection is
     // never.
     drainTimer = setInterval(() => {
-      if (closed || socket.bufferedAmount <= lowWaterMark) releaseBackPressure()
+      if (closed) {
+        stopDrainPolling()
+        return
+      }
+      if (socket.bufferedAmount <= lowWaterMark) catchUp()
     }, drainPollMs)
     drainTimer.unref()
   }
 
-  function releaseBackPressure(): void {
-    if (drainTimer !== null) {
-      clearInterval(drainTimer)
-      drainTimer = null
+  function stopDrainPolling(): void {
+    if (drainTimer === null) return
+    clearInterval(drainTimer)
+    drainTimer = null
+  }
+
+  function catchUp(): void {
+    stopDrainPolling()
+    congested = false
+    if (closed) return
+
+    // Same call a reconnecting client's `?after=` makes. `reset` means the ring
+    // no longer holds the byte this client needs next, so what is left is not a
+    // suffix of anything it has and cannot be appended to its grid.
+    const replay = session.scrollbackSince(nextOffset)
+
+    if (!replay.reset) {
+      sendOutput(replay.bytes)
+      return
     }
-    if (!paused) return
-    paused = false
-    session.resume()
+
+    const dropped = replay.offset - nextOffset
+    nextOffset = replay.offset
+    onResync({ sessionId: session.id, dropped, offset: replay.offset })
+    sendControl({ type: 'reset', offset: replay.offset, dropped })
+    sendOutput(replay.bytes)
+
+    // Same reasoning as the reset on attach, and easy to forget here: the
+    // client has just cleared its grid and rebuilt it from a stream that starts
+    // mid-history, possibly without the escape that entered the alternate
+    // screen or set the current colours. Bytes get it approximately right; only
+    // the application redrawing gets it actually right. A no-op once the child
+    // is gone, which is correct -- there is nothing left to do the repainting.
+    session.nudgeRedraw()
   }
 
   function requestResize(cols: number, rows: number): void {
@@ -413,7 +518,11 @@ export function attachTerminalSocket(
     // leaving: it is the size the pty should be in if the same client comes
     // straight back, and dropping it would put the reconnect one repaint behind.
     flushResize()
-    releaseBackPressure()
+
+    // Nothing to hand back to the session here -- it was never stopped. Anything
+    // this socket had not caught up on stays in the ring, which is exactly where
+    // the next connection's `?after=` will look for it.
+    stopDrainPolling()
 
     for (const undo of teardown.reverse()) {
       try {
@@ -450,6 +559,7 @@ export function attachTerminalSocket(
   // no window between snapshotting the ring and subscribing to the live stream
   // in which a chunk could be dropped or delivered twice.
   const replay = session.scrollbackSince(options.after ?? null)
+  nextOffset = replay.offset
 
   sendControl({
     type: 'ready',
@@ -461,15 +571,21 @@ export function attachTerminalSocket(
     rows: session.rows,
   })
 
-  if (replay.bytes.length > 0) sendBytes(replay.bytes)
+  sendOutput(replay.bytes)
 
   // A socket that failed on the very first write has already been torn down, and
   // subscribing now would register listeners nothing will ever remove.
   if (closed) return detach
 
-  teardown.push(session.onBytes(sendBytes))
+  teardown.push(session.onBytes(forwardOutput))
   teardown.push(
     session.onExit((exit) => {
+      // The last thing a program printed is the thing its user is waiting for,
+      // and a congested socket is sitting on it. Catch up before announcing the
+      // exit -- the session holds its ring open until every exit listener has
+      // run, precisely so this can work.
+      catchUp()
+
       sendControl({ type: 'exit', code: exit.code, signal: exit.signal })
       close(TERMINAL_CLOSE_EXITED, 'terminal exited')
     }),
@@ -541,8 +657,23 @@ export function terminalSocketPlugin(options: TerminalSocketPluginOptions): Fast
       await fastify.register(websocketPlugin)
     }
 
+    // A resync is output that was produced and never delivered. It is invisible
+    // from the client -- a terminal redrawing looks like a terminal redrawing --
+    // so if it is not in the log it did not happen as far as anyone debugging is
+    // concerned. Warn rather than info: it means the server dropped data.
+    const resolved: typeof attachOptions = {
+      ...attachOptions,
+      onResync:
+        attachOptions.onResync ??
+        ((resync) =>
+          fastify.log.warn(
+            { sessionId: resync.sessionId, dropped: resync.dropped, offset: resync.offset },
+            'terminal client fell behind the scrollback ring; dropped output and resynced',
+          )),
+    }
+
     fastify.get(path, { websocket: true }, (socket: TerminalWebSocket, request: FastifyRequest) => {
-      void connect(socket, request, host, attachOptions, onError)
+      void connect(socket, request, host, resolved, onError)
     })
   }
 }

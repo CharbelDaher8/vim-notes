@@ -1,21 +1,27 @@
 /**
  * The browser half of a pty session.
  *
- * Deliberately mirrors `TerminalSession` in core rather than inventing a client
- * vocabulary -- same reasoning as the `Platform` port: a rename is just a place
- * the two sides can drift.
+ * This used to say that `TERMINAL_WIRE` was "a guess" to be reconciled with the
+ * pty endpoint when someone built it. The endpoint was built and the guess was
+ * wrong in almost every particular -- it expected output as JSON text frames and
+ * sent input the same way, where the server sends and expects raw binary and
+ * keeps JSON for control only. Each side was internally consistent and fully
+ * tested, so nothing failed; the terminal simply could not have worked. This
+ * file now describes the protocol in
+ * `packages/server/src/ws/terminal-socket.ts` and nothing else.
  *
- * NOTE FOR WHOEVER BUILDS THE PTY ENDPOINT (task #9): `TERMINAL_WIRE` below is
- * the protocol this client assumes, and it is a guess in exactly the way
- * `NotesApiClient` is. It is declared in one place so reconciling it is a
- * single edit. Two things in core's `TerminalHost` shaped it:
+ * The three things that shape it:
  *
- *  - sessions outlive connections and are keyed by `id`, so the client attaches
- *    to a session rather than creating one per socket, and a reconnect must be
- *    able to name the session it wants;
- *  - `onExit` is distinct from the socket closing. A dropped phone connection
- *    is not nvim exiting, and the UI has to tell those apart -- one offers
- *    "reconnect", the other does not.
+ *  - Bytes stay bytes. A WebSocket frame already carries a text/binary bit, so
+ *    output arrives binary and untouched, and it is handed to xterm as a
+ *    `Uint8Array` so that xterm's own decoder holds a UTF-8 sequence split
+ *    across two frames. Decoding here would put a second decoder in the path
+ *    and a box-drawing character on the seam between two chunks would break.
+ *  - Sessions outlive connections. A reconnect names the session it wants and
+ *    the byte offset it got to, so a phone that drops off wifi comes back to
+ *    the same nvim and only the output it missed.
+ *  - `exit` is not the socket closing. A dropped connection offers a reconnect,
+ *    a dead nvim does not, and the UI has to tell them apart.
  */
 import type { Unsubscribe } from '@vim-notes/core'
 
@@ -26,29 +32,73 @@ export interface TerminalExit {
 
 export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'exited'
 
+/**
+ * The server could not continue the stream where this client left off, so the
+ * grid has to be thrown away rather than appended to.
+ *
+ * `dropped` is how much output was lost: a number when the server counted it,
+ * null when it could not -- a resume the ring could not serve at all knows that
+ * something is missing but not how much. Zero means nothing was lost and the
+ * clear is bookkeeping, which is the ordinary case of attaching to a session
+ * for the first time.
+ */
+export interface TerminalReset {
+  dropped: number | null
+}
+
 export interface TerminalConnection {
   write(data: string): void
   resize(cols: number, rows: number): void
-  onData(listener: (chunk: string) => void): Unsubscribe
+  /** Raw pty output. Handed to the emulator undecoded; see the file header. */
+  onBytes(listener: (chunk: Uint8Array) => void): Unsubscribe
+  /** Clear the grid before applying anything that arrives after this fires. */
+  onReset(listener: (reset: TerminalReset) => void): Unsubscribe
   onExit(listener: (exit: TerminalExit) => void): Unsubscribe
   onStatus(listener: (status: ConnectionStatus) => void): Unsubscribe
   readonly status: ConnectionStatus
   close(): void
 }
 
-/** Client -> server frames. JSON text frames; output comes back raw. */
+/**
+ * Client -> server frames.
+ *
+ * Input is binary and everything else is a JSON text frame, which is the
+ * server's discriminator: it reads the frame's own text/binary bit rather than
+ * a type prefix it would have to parse off every chunk of a paste.
+ */
 export const TERMINAL_WIRE = {
-  input: (data: string) => JSON.stringify({ type: 'input', data }),
-  resize: (cols: number, rows: number) => JSON.stringify({ type: 'resize', cols, rows }),
+  input: (data: string): Uint8Array => new TextEncoder().encode(data),
+  resize: (cols: number, rows: number): string => JSON.stringify({ type: 'resize', cols, rows }),
+  kill: (): string => JSON.stringify({ type: 'kill' }),
 } as const
 
+/** Server -> client control frames. Output is binary and is not one of these. */
 export type ServerFrame =
-  { type: 'output'; data: string } | { type: 'exit'; code: number; signal?: number }
+  | {
+      type: 'ready'
+      sessionId: string
+      resumed: boolean
+      reset: boolean
+      offset: number
+      cols: number
+      rows: number
+    }
+  | { type: 'reset'; offset: number; dropped: number }
+  | { type: 'exit'; code: number; signal?: number }
+  | { type: 'error'; message: string }
+  | { type: 'pong' }
 
 /**
  * Tolerant on purpose: a frame this client does not understand is ignored
- * rather than thrown, so adding a server-side message type later cannot break
- * an older client that is still open in a tab somewhere.
+ * rather than thrown, so adding a server-side message type cannot break an
+ * older client still open in a tab somewhere. That tolerance is the reason the
+ * `reset` frame could be deployed at all -- a client from before it existed
+ * drops it on the floor instead of failing.
+ *
+ * What it deliberately no longer does is treat a non-JSON text frame as raw
+ * output. That was a hedge against a server that piped the pty straight
+ * through, and against the real server it would render a malformed control
+ * frame into the user's terminal as text.
  */
 export function parseServerFrame(raw: string): ServerFrame | null {
   let parsed: unknown
@@ -56,28 +106,77 @@ export function parseServerFrame(raw: string): ServerFrame | null {
   try {
     parsed = JSON.parse(raw)
   } catch {
-    // Not JSON, so treat the frame as raw pty output. Keeps the protocol
-    // usable with a server that just pipes the pty straight through.
-    return { type: 'output', data: raw }
+    return null
   }
 
   if (typeof parsed !== 'object' || parsed === null) return null
   const frame = parsed as Record<string, unknown>
 
-  if (frame['type'] === 'output' && typeof frame['data'] === 'string') {
-    return { type: 'output', data: frame['data'] }
-  }
+  switch (frame['type']) {
+    case 'ready':
+      if (typeof frame['sessionId'] !== 'string' || typeof frame['offset'] !== 'number') return null
+      return {
+        type: 'ready',
+        sessionId: frame['sessionId'],
+        resumed: frame['resumed'] === true,
+        reset: frame['reset'] === true,
+        offset: frame['offset'],
+        cols: typeof frame['cols'] === 'number' ? frame['cols'] : 0,
+        rows: typeof frame['rows'] === 'number' ? frame['rows'] : 0,
+      }
 
-  if (frame['type'] === 'exit' && typeof frame['code'] === 'number') {
-    const signal = frame['signal']
-    return {
-      type: 'exit',
-      code: frame['code'],
-      ...(typeof signal === 'number' ? { signal } : {}),
+    case 'reset':
+      if (typeof frame['offset'] !== 'number' || typeof frame['dropped'] !== 'number') return null
+      return { type: 'reset', offset: frame['offset'], dropped: frame['dropped'] }
+
+    case 'exit': {
+      if (typeof frame['code'] !== 'number') return null
+      const signal = frame['signal']
+      return {
+        type: 'exit',
+        code: frame['code'],
+        ...(typeof signal === 'number' ? { signal } : {}),
+      }
     }
-  }
 
-  return null
+    case 'error':
+      if (typeof frame['message'] !== 'string') return null
+      return { type: 'error', message: frame['message'] }
+
+    case 'pong':
+      return { type: 'pong' }
+
+    default:
+      return null
+  }
+}
+
+export interface ResumeParams {
+  session: string | null
+  /** Bytes of the stream already applied. Null asks for everything. */
+  after: number | null
+  cols: number | null
+  rows: number | null
+}
+
+/**
+ * The URL for the next attempt.
+ *
+ * Carrying `session` and `after` is what makes a reconnect cheap: the server
+ * serves only the bytes this client has not seen, and answers `resumed: false`
+ * if the session is gone rather than failing the connection and leaving someone
+ * who left a tab open overnight looking at an error instead of an editor.
+ */
+export function resumeUrl(base: string, params: ResumeParams): string {
+  const query = new URLSearchParams()
+
+  if (params.session !== null) query.set('session', params.session)
+  if (params.after !== null) query.set('after', String(params.after))
+  if (params.cols !== null) query.set('cols', String(params.cols))
+  if (params.rows !== null) query.set('rows', String(params.rows))
+
+  const search = query.toString()
+  return search === '' ? base : `${base}?${search}`
 }
 
 /** Backoff for reconnects: quick at first, then out of the way. */

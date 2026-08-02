@@ -26,7 +26,8 @@
   font-size: var(--text-xs);
 }
 
-.terminal__status[data-state='reconnecting'] {
+.terminal__status[data-state='reconnecting'],
+.terminal__status[data-state='resynced'] {
   color: var(--warn);
 }
 

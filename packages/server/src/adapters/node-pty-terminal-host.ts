@@ -89,11 +89,30 @@ const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 
 /**
- * A few screens of a full-colour nvim redraw. Enough that a reconnect lands on
- * something recognisable, small enough that eight abandoned sessions holding
- * their rings is a couple of megabytes rather than a leak.
+ * Sized for the case that actually stresses it: a phone on bad wifi, attached to
+ * an nvim that keeps redrawing while the socket is too congested to be sent
+ * anything.
+ *
+ * The transport no longer stops the pty when a client falls behind -- it stops
+ * *sending* and leaves the bytes here, because stopping the pty means the tail
+ * is destroyed if the child exits while it is stopped, and the tail is the part
+ * a user cannot do without (see `pause`). So this ring is what a congested
+ * client falls behind *into*, and its size is how far behind a client may fall
+ * before the server has to admit it dropped output and make the client resync.
+ *
+ * Three things put it in the low megabytes. A congested socket has to drain
+ * roughly the high-water mark before it is written to again, which on a bad
+ * mobile link is tens of seconds, and interactive nvim produces some hundreds of
+ * kilobytes in that time -- a full-screen truecolor repaint is tens of KB and a
+ * scroll costs one. Four megabytes is on the order of a hundred such repaints,
+ * so a reconnect also lands on real history rather than a fragment. And eight
+ * abandoned sessions at this size is 32MB, which is noise beside the eight nvim
+ * processes they belong to.
+ *
+ * No size makes eviction impossible -- `yes`, or a build log, outruns any ring
+ * -- which is the whole reason the resync exists rather than a bigger number.
  */
-const DEFAULT_SCROLLBACK_BYTES = 256 * 1024
+const DEFAULT_SCROLLBACK_BYTES = 4 * 1024 * 1024
 
 /**
  * Long enough to survive a commute, a meeting, or a laptop lid; short enough
@@ -848,11 +867,18 @@ class NodePtySession implements PtySession {
     this.textListeners.clear()
     this.decoder = null
 
-    // The bytes are already at whoever was attached, and a dead session is not
-    // resumable, so holding a quarter megabyte per corpse buys nothing.
-    this.scrollback.clear()
-
+    // Notified *before* the ring is released, which is load-bearing rather than
+    // incidental. A consumer is allowed to be deliberately behind the stream --
+    // the WebSocket transport falls behind on purpose when a client cannot keep
+    // up, and catches up from the ring -- so "everyone attached already has
+    // these bytes" is no longer true at this point. Releasing first would
+    // destroy exactly the last screenful that the drain above went to the
+    // trouble of collecting.
     for (const listener of listeners) this.safely(() => listener(exit))
+
+    // Now nobody can ask for them again, and a dead session is not resumable, so
+    // holding megabytes per corpse buys nothing.
+    this.scrollback.clear()
   }
 
   private clearDrainTimers(): void {
