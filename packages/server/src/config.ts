@@ -22,11 +22,17 @@ const DEFAULT_PORT = 4321
  * 0.0.0.0 -- a default that binds every interface is one misconfigured firewall
  * away from being a public shell.
  *
- * In the Docker setup the container binds loopback and Caddy, which is itself
- * bound to the tailnet address, proxies to it. To serve the tailnet directly
- * without Caddy, set HOST to the tailnet IP explicitly. That is the seam where
- * a public endpoint with authentication would be added later, and it should
- * stay an explicit act.
+ * Under Docker this default is deliberately overridden to 0.0.0.0, and that is
+ * not a weakening. A container has its own network namespace, so binding its
+ * loopback would make the server unreachable from Caddy in a sibling container
+ * rather than merely private. There the boundary is structural instead: the
+ * server service publishes no ports at all, so it exists only on the private
+ * compose network, and only Caddy has a host mapping -- bound to BIND_ADDR,
+ * which defaults to 127.0.0.1 so a missing .env fails closed.
+ *
+ * Going public is therefore two deliberate changes rather than one: BIND_ADDR
+ * in deploy/.env, and a Caddyfile site block adding tls and authentication in
+ * front of the terminal WebSocket. Both files say so at the relevant line.
  */
 const DEFAULT_HOST = '127.0.0.1'
 
