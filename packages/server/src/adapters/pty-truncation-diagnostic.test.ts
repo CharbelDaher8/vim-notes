@@ -119,8 +119,10 @@ describe('pty delivery under load', () => {
       )
     }
 
-    // Per size, because "the shortfall grows with the payload" is one of the two
-    // predictions and a single worst-case number cannot show it either way.
+    // Per size, because a single worst-case number cannot show whether a
+    // shortfall scales with the payload -- which is the first thing worth
+    // knowing about any future regression, and was the first thing worth
+    // knowing about this one.
     for (const size of SIZES) {
       const runs = measurements.filter((m) => m.size === size)
       const lossy = runs.filter((m) => m.shortfall > 0)
@@ -136,8 +138,7 @@ describe('pty delivery under load', () => {
         `lossyRuns=${measurements.filter((m) => m.shortfall > 0).length}/${measurements.length} ` +
         `worstShortfall=${Math.max(...measurements.map((m) => m.shortfall))} ` +
         `everyLossIsAPrefix=${measurements.every((m) => m.exactPrefix)} ` +
-        `maxChunkSeen=${Math.max(...measurements.map((m) => m.maxChunk))} ` +
-        `verdict=${verdict(measurements)}`,
+        `maxChunkSeen=${Math.max(...measurements.map((m) => m.maxChunk))}`,
     )
 
     expect(measurements).toHaveLength(SIZES.length * REPEATS)
@@ -169,38 +170,4 @@ describe('pty delivery under load', () => {
  */
 function report(line: string): void {
   process.stdout.write(`${line}\n`)
-}
-
-/**
- * Which hypothesis the numbers fit, including "neither".
- *
- * *How often* loss happens matters as much as how big it is, and reading only
- * the size would get this backwards. A discarded read at teardown is structural:
- * it should happen on essentially every run, bounded by one buffer, and not care
- * how much was sent. The 200ms destroy is a race against a stalled event loop:
- * it should be intermittent, and take more when more was in flight. So a run
- * that loses 3397 bytes twice out of nine is evidence *against* the structural
- * explanation, even though every number involved is under 4096.
- *
- * Returning 'inconclusive' is a real answer here. Two candidates were enumerated
- * from what was known at the time and there is no reason the truth has to be one
- * of them; forcing a binary would launder a guess into a finding.
- */
-function verdict(measurements: Measurement[]): string {
-  const lossy = measurements.filter((m) => m.shortfall > 0)
-  if (lossy.length === 0) return 'no-loss-here'
-  if (!measurements.every((m) => m.exactPrefix)) return 'inconclusive-not-a-clean-truncation'
-
-  const losses = lossy.map((m) => m.shortfall)
-  const everyRunLost = lossy.length === measurements.length
-  const withinOneRead = Math.max(...losses) < 4096
-  const clustered = Math.max(...losses) - Math.min(...losses) < 1024
-
-  if (everyRunLost && withinOneRead && clustered) return 'consistent-with-one-discarded-read'
-
-  // Intermittent, or larger than a buffer, or wandering: all three are what a
-  // race against a 200ms timer looks like and none is what a fixed cap does.
-  if (!everyRunLost || !withinOneRead) return 'consistent-with-the-200ms-destroy'
-
-  return 'inconclusive-loss-is-bounded-but-uneven'
 }
