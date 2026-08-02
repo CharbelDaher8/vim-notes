@@ -43,6 +43,13 @@ services:
       GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-vim-notes}
       GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-vim-notes@localhost}
 
+      # Set WATCH_POLLING=true in .env when NOTES_DIR is a bind mount from a
+      # macOS or Windows host, or a network filesystem. Native recursive
+      # watching drops events on all of those and fails silently -- the watcher
+      # looks healthy and the browser simply stops seeing what nvim writes.
+      WATCH_POLLING: ${WATCH_POLLING:-false}
+      WATCH_POLL_INTERVAL_MS: ${WATCH_POLL_INTERVAL_MS:-100}
+
       TERMINAL_COMMAND: nvim
       NODE_ENV: production
 

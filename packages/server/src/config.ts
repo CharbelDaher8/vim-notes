@@ -58,6 +58,24 @@ const schema = z.object({
   /** Cap, so continuous typing cannot postpone a commit forever. */
   AUTOCOMMIT_MAX_DELAY_MS: z.coerce.number().int().min(1_000).default(30_000),
 
+  /**
+   * Poll for file changes instead of relying on native filesystem events.
+   *
+   * Off by default: on Linux with a normal volume, inotify is accurate and free,
+   * while polling a large tree burns CPU continuously.
+   *
+   * Turn it on when the notes directory is a Docker bind mount from a macOS or
+   * Windows host, or any network filesystem. Native recursive watching drops
+   * events on all of those, and the failure mode is the bad one -- the watcher
+   * reports nothing and looks perfectly healthy, so the web client silently
+   * stops noticing what nvim writes.
+   */
+  WATCH_POLLING: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  WATCH_POLL_INTERVAL_MS: z.coerce.number().int().min(20).default(100),
+
   /** What the terminal runs. The product is nvim; this exists for tests. */
   TERMINAL_COMMAND: z.string().default('nvim'),
   /** Abandoned ptys are reaped after this long with nothing attached. */

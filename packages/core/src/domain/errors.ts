@@ -35,3 +35,22 @@ export class NotFoundError extends NoteStoreError {}
 
 /** Something already occupies the path, or an ancestor that must be a directory. */
 export class PathOccupiedError extends NoteStoreError {}
+
+/** A search could not be completed. */
+export class SearchError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = new.target.name
+  }
+}
+
+/**
+ * The search backend is missing rather than broken -- ripgrep is an external
+ * binary that may simply not be installed on a given box.
+ *
+ * Worth distinguishing because the two need different responses: a failed
+ * search is worth retrying, an absent binary is a deployment problem that will
+ * fail identically forever, and the UI should say so rather than showing an
+ * empty result set that looks like "no matches".
+ */
+export class SearchUnavailableError extends SearchError {}

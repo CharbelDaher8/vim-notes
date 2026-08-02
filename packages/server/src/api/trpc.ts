@@ -1,5 +1,11 @@
 import type { FileWatcher, NoteStore, Search, TerminalHost, VersionControl } from '@vim-notes/core'
-import { NotFoundError, PathEscapeError, PathOccupiedError } from '@vim-notes/core'
+import {
+  NotFoundError,
+  PathEscapeError,
+  PathOccupiedError,
+  SearchError,
+  SearchUnavailableError,
+} from '@vim-notes/core'
 import { initTRPC, TRPCError } from '@trpc/server'
 
 /**
@@ -45,6 +51,17 @@ function mapPortError(cause: unknown): TRPCError | null {
   if (cause instanceof PathEscapeError) {
     console.error('[security] path escape attempt:', cause.message)
     return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'request refused', cause })
+  }
+
+  // A missing ripgrep is a deployment problem, not a failed query, and it will
+  // fail identically forever. Reporting it distinctly stops the UI rendering an
+  // empty result set that reads as "no matches".
+  if (cause instanceof SearchUnavailableError) {
+    return new TRPCError({ code: 'NOT_IMPLEMENTED', message: cause.message, cause })
+  }
+
+  if (cause instanceof SearchError) {
+    return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: cause.message, cause })
   }
 
   return null
