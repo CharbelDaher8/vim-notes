@@ -52,6 +52,21 @@ pnpm verify       # typecheck + lint + format + test, same as CI
 Point the server at a notes directory with `NOTES_ROOT` (defaults to
 `./notes-dev`, which is gitignored).
 
+`pnpm dev` runs the web client against the real server: Vite proxies `/trpc` to
+it, including the WebSocket the file watcher streams over. To work on the UI
+with no server, no notes directory and no git, run the client against its
+built-in fake instead:
+
+```bash
+VITE_PLATFORM=memory pnpm --filter @vim-notes/web dev
+```
+
+That serves seeded notes from `InMemoryPlatform` and turns on the `demo` menu in
+the header, which fakes nvim and git writing to the directory so the conflict
+and reconcile paths can be reached without a terminal. It is gated on Vite's
+`DEV` flag, so a production build compiles the option away entirely rather than
+leaving a switch a deployed client could be talked into.
+
 **The notes directory has to be its own git repository**, and the server refuses
 to start otherwise. That is not pedantry. `./notes-dev` sits inside this
 repository, so without its own `.git` it inherits this one — and then

@@ -1,85 +1,51 @@
 /**
  * `Platform` over the tRPC API.
  *
- * The transport is injected rather than constructed here so that the composition
- * root owns the URL, the headers and the WebSocket link, and so that this file
- * can be typechecked before the server exists.
+ * The transport is injected rather than constructed here so that the
+ * composition root owns the origin and the links, and so that this class stays
+ * a plain translation between the client port and the router.
  *
- * NOTE FOR WHOEVER LANDS THE ROUTER: `NotesApiClient` below is the shape this
- * client assumes, written to be structurally satisfied by
- * `createTRPCClient<AppRouter>()`. Once `@vim-notes/server` exports `AppRouter`,
- * delete the interface and type the parameter as the real proxy client -- if the
- * router disagrees with this shape, the mismatch is meant to surface here and
- * nowhere else in the app.
+ * The parameter is the *real* `createTRPCClient<AppRouter>()` type, imported
+ * from the server package. That is the point of this file: a procedure that is
+ * renamed, an input whose schema changes, a return type that stops matching --
+ * every one of those is a compile error here and nowhere else in the app.
+ *
+ * This file used to declare a hand-written `NotesApiClient` interface instead,
+ * as a placeholder until the router existed. It was wrong: it put the index
+ * routes under `notesIndex` where the router mounts them as `index`, and it
+ * declared the three void-returning mutations as returning nothing when the
+ * router answers `{ moved: true }` and friends. Both were invisible for as long
+ * as the placeholder was the only thing checking.
  */
 import {
   FORCE_WRITE,
   type AnnotationFilter,
   type AnnotationRecord,
-  type CreateDirectoryInput,
   type ExpectedVersion,
   type FileChangeEvent,
   type ForceWrite,
-  type MoveNoteInput,
   type NoteDocument,
   type NoteGraph,
   type NotePath,
-  type ReadNoteInput,
-  type RemoveNoteInput,
   type ResolvedLink,
   type SearchHit,
   type SearchQuery,
-  type SearchQueryInput,
   type TreeEntry,
   type Unsubscribe,
-  type WriteNoteInput,
   type WriteOutcome,
 } from '@vim-notes/core'
 
 import type { Platform } from './platform'
+import type { NotesClient } from './trpc-client'
 import { documentHost } from './document-host'
-
-export interface NotesApiClient {
-  notes: {
-    tree: { query: () => Promise<TreeEntry[]> }
-    read: { query: (input: ReadNoteInput) => Promise<NoteDocument | null> }
-    write: { mutate: (input: WriteNoteInput) => Promise<WriteOutcome> }
-    move: { mutate: (input: MoveNoteInput) => Promise<void> }
-    remove: { mutate: (input: RemoveNoteInput) => Promise<void> }
-    createDirectory: { mutate: (input: CreateDirectoryInput) => Promise<void> }
-    changes: {
-      subscribe: (
-        input: undefined,
-        handlers: { onData: (event: FileChangeEvent) => void; onError?: (error: unknown) => void },
-      ) => { unsubscribe: () => void }
-    }
-  }
-  search: { query: (input: SearchQueryInput) => Promise<SearchHit[]> }
-  /**
-   * The derived index. Written against the router that is being built
-   * alongside this -- `annotations`, `backlinks`, `outboundLinks`, `graph`
-   * under `notesIndex` -- rather than waiting for it, on the same terms as the
-   * note declaring `NotesApiClient` above: if the router lands with a different
-   * shape, the mismatch surfaces here and nowhere else.
-   *
-   * `outboundLinks` is deliberately absent. The route exists, but `Platform`
-   * does not expose it and declaring a dependency the client never calls would
-   * constrain the router for nothing.
-   */
-  notesIndex: {
-    annotations: { query: (input: AnnotationFilter) => Promise<AnnotationRecord[]> }
-    backlinks: { query: (input: { path: NotePath }) => Promise<ResolvedLink[]> }
-    graph: { query: () => Promise<NoteGraph> }
-  }
-}
 
 export class WebPlatform implements Platform {
   readonly id = 'web' as const
   readonly host = documentHost
 
-  readonly #client: NotesApiClient
+  readonly #client: NotesClient
 
-  constructor(client: NotesApiClient) {
+  constructor(client: NotesClient) {
     this.#client = client
   }
 
@@ -96,10 +62,12 @@ export class WebPlatform implements Platform {
     content: string,
     expected: ExpectedVersion | ForceWrite,
   ): Promise<WriteOutcome> {
-    // The symbol cannot cross the wire, so it becomes the `force` flag that
-    // `writeNoteInput` declares. `expected` still travels on a forced write --
-    // the server logs what was clobbered, and a nullable field is a worse way
-    // to say "deliberate" than a field literally named `force`.
+    // `FORCE_WRITE` is a symbol and cannot cross the wire, so it becomes the
+    // `force` flag `writeNoteInput` declares, and `expected` goes as null --
+    // there is no hash to send, because forcing is precisely the case where
+    // the client has stopped claiming to know what is on disk. A field named
+    // `force` says "deliberate" where a nullable `expected` would only say
+    // "missing", which is the distinction the server needs to log a clobber.
     const force = expected === FORCE_WRITE
     return this.#client.notes.write.mutate({
       path,
@@ -109,20 +77,29 @@ export class WebPlatform implements Platform {
     })
   }
 
-  move(from: NotePath, to: NotePath): Promise<void> {
-    return this.#client.notes.move.mutate({ from, to })
+  // The three below answer `{ moved: true }`, `{ removed: true }` and
+  // `{ created: true }`. The port returns void deliberately: those flags say
+  // only that the call was not a no-op, which the caller already knows because
+  // it is the thing that asked. Awaited and dropped rather than plumbed
+  // through as a boolean nothing would branch on.
+
+  async move(from: NotePath, to: NotePath): Promise<void> {
+    await this.#client.notes.move.mutate({ from, to })
   }
 
-  remove(path: NotePath): Promise<void> {
-    return this.#client.notes.remove.mutate({ path })
+  async remove(path: NotePath): Promise<void> {
+    await this.#client.notes.remove.mutate({ path })
   }
 
-  createDirectory(path: NotePath): Promise<void> {
-    return this.#client.notes.createDirectory.mutate({ path })
+  async createDirectory(path: NotePath): Promise<void> {
+    await this.#client.notes.createDirectory.mutate({ path })
   }
 
   search(query: SearchQuery): Promise<SearchHit[]> {
-    return this.#client.search.query({
+    // `search.query` is the procedure's path; the second `.query` is tRPC
+    // asking which kind of operation it is. Reads badly and is correct --
+    // renaming a route to make one call site prettier is the worse trade.
+    return this.#client.search.query.query({
       pattern: query.pattern,
       regex: query.regex ?? false,
       caseSensitive: query.caseSensitive ?? false,
@@ -131,25 +108,46 @@ export class WebPlatform implements Platform {
     })
   }
 
+  // `index` rather than `notesIndex`: the router mounts `notesIndexRouter`
+  // under `index`, and the server is the side that gets to name things.
+  // `outboundLinks` is deliberately not called -- the route exists, but
+  // `Platform` does not expose it.
+
   annotations(filter: AnnotationFilter = {}): Promise<AnnotationRecord[]> {
-    return this.#client.notesIndex.annotations.query(filter)
+    return this.#client.index.annotations.query(filter)
   }
 
   backlinks(path: NotePath): Promise<ResolvedLink[]> {
-    return this.#client.notesIndex.backlinks.query({ path })
+    return this.#client.index.backlinks.query({ path })
   }
 
   graph(): Promise<NoteGraph> {
-    return this.#client.notesIndex.graph.query()
+    return this.#client.index.graph.query()
   }
 
+  /**
+   * The watcher, as a stream.
+   *
+   * What happens when the socket drops, said plainly: the link reconnects on
+   * its own and re-sends this subscription, so changes start arriving again --
+   * but **every change made during the gap is lost**. The server keeps no log
+   * of past events to replay from, so there is nothing to ask for. A note
+   * edited in nvim while the phone was in a lift stays stale in this client
+   * until something refetches it.
+   *
+   * That is survivable rather than fine, and it is survivable for two specific
+   * reasons. Nothing is corrupted: the version check on write still refuses a
+   * stale save, so the worst case is being told about a conflict instead of
+   * seeing the edit arrive. And the tree query carries a 30-second
+   * `staleTime` (see `useTree`) precisely as the backstop for this, so a
+   * created or deleted note reappears on the next refetch.
+   */
   subscribeToChanges(listener: (event: FileChangeEvent) => void): Unsubscribe {
     const subscription = this.#client.notes.changes.subscribe(undefined, {
       onData: listener,
       onError: (error) => {
-        // A dropped watcher means the editor stops learning about nvim's
-        // writes. Nothing is corrupted -- the version check still refuses a
-        // stale save -- so this is logged rather than surfaced as an error.
+        // Reached for a subscription the server refused, not for a dropped
+        // connection -- the link retries those itself without reporting here.
         console.warn('[platform] change subscription failed', error)
       },
     })

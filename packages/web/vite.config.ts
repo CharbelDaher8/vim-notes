@@ -15,7 +15,12 @@ export default defineConfig({
     // server served `/term/ws` on 4321, so the dev terminal could not connect
     // at all. Change either side and change this.
     proxy: {
-      '/trpc': { target: 'http://127.0.0.1:4321', changeOrigin: true },
+      // `ws: true` matters as much as the target. Queries and mutations are
+      // HTTP under `/trpc/`, but subscriptions upgrade at `/trpc` itself --
+      // see `useWSS` in packages/server/src/main.ts -- and without this the
+      // upgrade is answered with a 404 that surfaces as a socket that closes
+      // immediately and reconnects forever.
+      '/trpc': { target: 'http://127.0.0.1:4321', changeOrigin: true, ws: true },
       // The pty socket. Same origin in production, so only dev needs this.
       '/term/ws': { target: 'ws://127.0.0.1:4321', ws: true },
     },

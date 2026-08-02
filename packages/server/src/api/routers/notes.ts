@@ -5,8 +5,10 @@ import {
   readNoteInput,
   removeNoteInput,
   writeNoteInput,
+  type FileChangeEvent,
 } from '@vim-notes/core'
 import { TRPCError } from '@trpc/server'
+import { observable } from '@trpc/server/observable'
 
 import { procedure, router } from '../trpc'
 
@@ -54,4 +56,27 @@ export const notesRouter = router({
     await ctx.notes.createDirectory(input.path)
     return { created: true }
   }),
+
+  /**
+   * The watcher, over the wire. This is what makes DECISIONS.md §3 true rather
+   * than aspirational: nvim saves a note in the pty, and the phone holding that
+   * note open finds out. Without it the web client is looking at a photograph.
+   *
+   * The event crosses **unchanged**, `origin` included, and that field is the
+   * reason there is no filtering here. The obvious optimisation -- drop `api`
+   * events, since the client that wrote the file already knows -- is wrong: a
+   * second browser tab is also `api`, and to that tab the change is news. The
+   * client decides; see `decideReconcile` on the web side.
+   *
+   * An observable rather than an async generator because the source is a
+   * subscribe/unsubscribe callback and this is the shape that maps onto it with
+   * no queue in between. The cost is that this stream is not resumable: tRPC's
+   * `tracked()` needs event ids to replay from, and the watcher keeps no log to
+   * replay out of. What that means for a dropped connection is written down at
+   * the client end, in `WebPlatform.subscribeToChanges`, which is where the
+   * reconnect actually happens.
+   */
+  changes: procedure.subscription(({ ctx }) =>
+    observable<FileChangeEvent>((emit) => ctx.watcher.subscribe((event) => emit.next(event))),
+  ),
 })

@@ -27,10 +27,22 @@
 
 	# --- tRPC API ------------------------------------------------------------
 	#
-	# Assumes the router is mounted at /trpc. Confirm against the composition
-	# root when it lands -- if it moves, this silently starts serving index.html
-	# to the API client instead, which surfaces as JSON parse errors.
-	handle /trpc/* {
+	# The router is mounted at /trpc (see packages/server/src/main.ts). If it
+	# moves, this silently starts serving index.html to the API client instead,
+	# which surfaces as JSON parse errors.
+	#
+	# Both paths, and the bare one is not a typo. Queries and mutations are
+	# `/trpc/<procedure>`, but the subscription WebSocket upgrades at `/trpc`
+	# exactly -- that is where `useWSS` mounts it -- and `/trpc/*` does not
+	# match `/trpc`. With only the wildcard, the upgrade request falls through
+	# to the SPA handler below and is answered with index.html: the socket
+	# closes, the client reconnects forever, and the app looks like it is
+	# working right up until someone edits a file in nvim and nothing happens.
+	#
+	# Caddy forwards the upgrade itself; see the note on /term/ws below for why
+	# there is deliberately nothing else in this block.
+	@trpc path /trpc /trpc/*
+	handle @trpc {
 		reverse_proxy server:4321
 	}
 
