@@ -125,6 +125,34 @@ interface TauriGlobal {
   }
 }
 
+/**
+ * Commands from `tauri-plugin-opener`, addressed through the core `invoke`.
+ *
+ * `plugin:<name>|<command>` is how a plugin command is reached without its npm
+ * package -- `@tauri-apps/plugin-opener` is not a dependency here and would only
+ * be a thin wrapper around these two strings. Both are granted individually in
+ * src-tauri/capabilities/default.json; the plugin refuses anything else.
+ *
+ * The shell previously invoked `open_external` and `reveal_in_file_manager`,
+ * which were never implemented on the Rust side. `invoke` rejects an unknown
+ * command, so every external link in the desktop build failed -- and this is
+ * the one that matters, because the fallback in a webview is a navigation that
+ * replaces the running application.
+ */
+const OPEN_URL = 'plugin:opener|open_url'
+const REVEAL_ITEM = 'plugin:opener|reveal_item_in_dir'
+
+/**
+ * Detection reads the global rather than importing `@tauri-apps/api`, and
+ * `app.withGlobalTauri` is set in tauri.conf.json to put it there.
+ *
+ * Do not "tidy" this into an import without also changing that setting and
+ * adding the dependency. Without the global this returns null in a real desktop
+ * window, the host silently falls back to the browser one, and the only UI that
+ * can tell the app where its server lives -- gated on `kind === 'tauri'` --
+ * never renders. The app then ships unable to reach anything, with no way to
+ * discover why.
+ */
 function tauri(): TauriGlobal | null {
   const global = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__
   return global ?? null
@@ -154,13 +182,25 @@ export function createTauriHost(): PlatformHost {
       // Refused before it reaches the OS. In a webview a bad navigation does
       // not just open a tab, it replaces the application.
       if (!isSafeExternalUrl(url)) return
-      await api.core?.invoke?.('open_external', { url })
+      await api.core?.invoke?.(OPEN_URL, { url })
     },
 
     revealInFileManager: async (path) => {
-      await api.core?.invoke?.('reveal_in_file_manager', { path })
+      await api.core?.invoke?.(REVEAL_ITEM, { path })
     },
 
+    /**
+     * Wired on this side only. The Rust shell does not emit
+     * `vim-notes://command` yet, so nothing arrives and no menu accelerator or
+     * global hotkey fires.
+     *
+     * Worth saying out loud rather than leaving to be discovered by someone
+     * wondering why Cmd+N does nothing: DECISIONS §10 names keyboard capture as
+     * the reason the desktop build exists at all. What is done is the half that
+     * mattered first -- the macOS menu deliberately *omits* Cmd+W and Cmd+T so
+     * the webview receives them. Emitting commands from the native side is the
+     * unfinished half.
+     */
     onCommand: (listener) => {
       let cancel: (() => void) | null = null
       let cancelled = false

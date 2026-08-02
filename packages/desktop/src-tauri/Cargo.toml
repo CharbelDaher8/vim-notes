@@ -11,6 +11,19 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+
+# Opening links in the OS browser, and revealing a note in Finder/Explorer.
+#
+# Not a convenience. A plain navigation inside a webview *replaces the running
+# application* -- there is no browser chrome and no back button to come back
+# from -- and notes are full of links, so this is the difference between a link
+# being useful and being destructive.
+#
+# A maintained plugin rather than two hand-written commands: the failure modes
+# of shelling out to `open`/`xdg-open`/`ShellExecute` per platform are then
+# somebody else's to get right, and the permissions below are narrower than the
+# blanket shell access a bespoke version would tempt us into.
+tauri-plugin-opener = "2"
 # Not used by main.rs today. They are the two crates every Tauri command needs
 # the moment one is added, and they are already in the tree via tauri, so having
 # them here costs nothing and removes a step from the first command.

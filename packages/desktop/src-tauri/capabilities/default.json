@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Baseline permissions for the single main window. The shell asks for nothing beyond Tauri's own defaults: the client talks to the server over HTTP and a WebSocket like any browser would, so no filesystem, shell or process permission is needed here.",
+  "description": "Baseline permissions for the single main window. The client talks to the server over HTTP and a WebSocket like any browser would, so no filesystem, shell or process permission is needed. The two opener permissions are the entire IPC surface: open a link in the OS browser, and reveal a note in the file manager. Listed individually rather than taking opener:default, which also grants opening arbitrary paths with an arbitrary program.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "opener:allow-open-url", "opener:allow-reveal-item-in-dir"]
 }

@@ -109,11 +109,10 @@ literal host, because the host is the user's own machine name.
 
 **That origin is a runtime setting in `packages/web`, not a Tauri command.**
 `localStorage` works in the Tauri webview, so the web package persists it with a
-build-time default and no Rust is involved. Two reasons it landed there: the IPC
-surface stays at exactly zero, which is the right posture for something whose
-entire access story is "unreachable off the tailnet"; and a tailnet address can
-change, so baking it in at build time would mean rebuilding the app to move
-house.
+build-time default and no Rust is involved. Two reasons it landed there: it adds
+no IPC at all, which is the right posture for something whose entire access story
+is "unreachable off the tailnet"; and a tailnet address can change, so baking it
+in at build time would mean rebuilding the app to move house.
 
 It is implemented in `packages/web/src/platform/server-origin.ts`, with the form
 in `packages/web/src/app/server-settings.tsx`. Precedence is stored value →
@@ -124,9 +123,34 @@ in a browser. Set a build-time default with:
 VITE_SERVER_ORIGIN=http://100.64.0.1:8080 pnpm --filter @vim-notes/desktop build:app
 ```
 
-So this package deliberately exposes **no commands and no IPC** beyond Tauri's
-built-in `core:default`. If that ever changes, `capabilities/default.json` is
-the file that has to grant it.
+So this package writes **no commands of its own**. The entire IPC surface is two
+permissions from `tauri-plugin-opener`, listed in `capabilities/default.json`.
+
+## The opener plugin
+
+`openExternal` is load-bearing rather than cosmetic: a plain navigation inside a
+webview **replaces the running application**, with no browser chrome and no back
+button to return from, and notes are full of links. The web client previously
+invoked `open_external` and `reveal_in_file_manager`, neither of which existed
+here — `invoke` rejects an unknown command, so every external link failed.
+
+`tauri-plugin-opener` rather than two hand-written commands: the per-platform
+business of `open` / `xdg-open` / `ShellExecute` is then maintained by someone
+else, and the permissions are narrower than the blanket shell access a bespoke
+version invites.
+
+Granted individually rather than via `opener:default`, which also permits
+opening arbitrary paths with an arbitrary program:
+
+| Permission                        | Used by                    |
+| --------------------------------- | -------------------------- |
+| `opener:allow-open-url`           | `host.openExternal`        |
+| `opener:allow-reveal-item-in-dir` | `host.revealInFileManager` |
+
+The web side reaches them as `plugin:opener|open_url` and
+`plugin:opener|reveal_item_in_dir` through the core `invoke`, so
+`@tauri-apps/plugin-opener` is not a dependency — it would only wrap those two
+strings.
 
 ### `withGlobalTauri` is on, and is load-bearing
 

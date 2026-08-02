@@ -12,7 +12,9 @@
 //! target exists. See `menu` below.
 
 fn main() {
-    let builder = tauri::Builder::default();
+    // The only plugin, and the only IPC this shell exposes beyond Tauri's own
+    // defaults. See Cargo.toml for why it is worth the surface.
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
 
     // Only macOS gets a menu. On Windows and Linux an app has no menu bar
     // unless one is set, and setting one there would add a strip of chrome
