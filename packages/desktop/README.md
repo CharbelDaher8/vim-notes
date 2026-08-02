@@ -49,25 +49,42 @@ The Edit submenu is kept deliberately: on macOS the clipboard inside a webview
 is driven by those menu items, and an app without them has copy and paste that
 silently do nothing.
 
-### Not done yet: Windows browser accelerators
+### Windows: browser accelerators
 
-On Windows the interception point is different. WebView2 has no tabs or windows
-of its own, so Ctrl+W and Ctrl+T reach the page already — but WebView2 _does_
-claim a set of browser accelerator keys, and three of them matter here:
+The interception point on Windows is different. WebView2 has no tabs or windows
+of its own, so Ctrl+W and Ctrl+T reach the page already — but it claims a set of
+_browser_ accelerators before the page sees them, and three of those are
+bindings this app cannot afford to lose:
 
-| Key      | WebView2 does | vim wants          |
-| -------- | ------------- | ------------------ |
-| `Ctrl+F` | Find on page  | page forward       |
-| `Ctrl+P` | Print         | previous / history |
-| `Ctrl+R` | Reload        | redo               |
+| Key      | WebView2 does | what it means here    |
+| -------- | ------------- | --------------------- |
+| `Ctrl+F` | Find on page  | page forward in vim   |
+| `Ctrl+P` | Print         | previous / completion |
+| `Ctrl+R` | Reload        | redo                  |
 
-Turning those off is one call —
-`ICoreWebView2Settings3::put_AreBrowserAcceleratorKeysEnabled(false)`, reached
-through `WebviewWindow::with_webview` — but it needs the `webview2-com` and
-`windows` crates pinned to exactly the versions Tauri itself uses, and a
-mismatch there is a type error rather than a graceful failure. That was not
-verifiable without fetching the crate index, so it is written down here rather
-than guessed at.
+The `keyboard` module in `src-tauri/src/main.rs` turns them off through
+`ICoreWebView2Settings3::AreBrowserAcceleratorKeysEnabled`, reached via
+`WebviewWindow::with_webview`. An older WebView2 runtime does not implement that
+interface, so the cast is allowed to fail: the app stays usable with the
+accelerators left on rather than refusing to start.
+
+`webview2-com` and `windows` are pinned in `Cargo.toml` to the versions Tauri
+already resolves (0.38 and 0.61), and both bind `windows-core` 0.61.2. That
+matters more than it looks: the cast converts a COM pointer the webview handed
+us, so a second copy of `windows-core` in the tree would make the interface a
+nominally different type and the cast would not compile.
+
+**Not yet compiled for Windows.** The pins are read from `Cargo.lock` and the
+manifest is verified, but the FFI body itself — the method names and the
+`false.into()` conversion — has only been checked on a macOS host, where the
+Windows target is never built. The `desktop` workflow compiles it for real on
+`windows-latest`; until that runs, treat this block as unverified. Locally:
+
+```sh
+rustup target add x86_64-pc-windows-msvc
+cargo check --manifest-path packages/desktop/src-tauri/Cargo.toml \
+  --target x86_64-pc-windows-msvc
+```
 
 ## Signing
 
@@ -90,7 +107,14 @@ absolute. The CSP in `tauri.conf.json` already allows `http:`, `https:`, `ws:`
 and `wss:` in `connect-src` for exactly this reason; it cannot be narrowed to a
 literal host, because the host is the user's own machine name.
 
-If that origin should be settable in the UI rather than baked in at build time,
-this package is where a `get_server_url` / `set_server_url` command pair would
-live, and `capabilities/default.json` would gain the permission for it. Nothing
-here assumes either answer yet.
+**That origin is a runtime setting in `packages/web`, not a Tauri command.**
+`localStorage` works in the Tauri webview, so the web package persists it with a
+build-time default and no Rust is involved. Two reasons it landed there: the IPC
+surface stays at exactly zero, which is the right posture for something whose
+entire access story is "unreachable off the tailnet"; and a tailnet address can
+change, so baking it in at build time would mean rebuilding the app to move
+house.
+
+So this package deliberately exposes **no commands and no IPC** beyond Tauri's
+built-in `core:default`. If that ever changes, `capabilities/default.json` is
+the file that has to grant it.

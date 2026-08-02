@@ -20,9 +20,74 @@ fn main() {
     #[cfg(target_os = "macos")]
     let builder = builder.menu(menu::build);
 
+    // Windows takes its keys back from the webview instead -- see `keyboard`.
+    #[cfg(target_os = "windows")]
+    let builder = builder.setup(|app| {
+        keyboard::release_browser_accelerators(app);
+        Ok(())
+    });
+
     builder
         .run(tauri::generate_context!())
         .expect("failed to start the vim-notes desktop shell");
+}
+
+/// Windows: hand the browser accelerator keys back to the editor.
+///
+/// The macOS problem is the menu bar. The Windows problem is a different one
+/// with the same consequence. WebView2 has no tabs and no windows of its own,
+/// so Ctrl+W and Ctrl+T reach the page already -- but it does claim a set of
+/// *browser* accelerators before the page sees them, and three of those are
+/// bindings this app cannot afford to lose:
+///
+/// | key    | WebView2 does | what it means here      |
+/// |--------|---------------|-------------------------|
+/// | Ctrl+F | find on page  | page forward in vim     |
+/// | Ctrl+P | print dialog  | previous / completion   |
+/// | Ctrl+R | reload        | redo                    |
+///
+/// A print dialog opening over nvim because someone reached for Ctrl+P is the
+/// desktop build failing at the one job it exists to do.
+///
+/// Turning them off is a single COM property, but it is reachable only through
+/// the platform webview, hence the FFI. `ICoreWebView2Settings3` is the
+/// interface that carries it; an older WebView2 runtime will not implement it,
+/// which is why the cast is allowed to fail rather than being unwrapped.
+#[cfg(target_os = "windows")]
+mod keyboard {
+    use tauri::{App, Manager};
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows::core::Interface;
+
+    pub fn release_browser_accelerators(app: &App) {
+        let Some(window) = app.get_webview_window("main") else {
+            return;
+        };
+
+        // `with_webview` runs on the UI thread once the webview exists.
+        let _ = window.with_webview(|webview| {
+            let outcome = unsafe {
+                webview
+                    .controller()
+                    .CoreWebView2()
+                    .and_then(|core| core.Settings())
+                    .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
+                    .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false.into()))
+            };
+
+            // Degrading quietly is the right behaviour in a release build: the
+            // app is perfectly usable with browser accelerators left on, and
+            // there is no console to print to under `windows_subsystem`. In a
+            // debug build there is one, and silence would make this impossible
+            // to tell apart from the code never having run.
+            #[cfg(debug_assertions)]
+            if let Err(error) = &outcome {
+                eprintln!("vim-notes: could not release WebView2 accelerator keys: {error}");
+            }
+
+            let _ = outcome;
+        });
+    }
 }
 
 /// The macOS menu bar, and the keyboard argument for the whole desktop app.

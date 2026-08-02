@@ -17,6 +17,22 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Windows only, and only to turn off WebView2's browser accelerator keys -- see
+# the `keyboard` module in src/main.rs.
+#
+# The versions are not chosen, they are read out of Cargo.lock: tauri already
+# resolves webview2-com 0.38.2 and windows 0.61.3, and both bind windows-core
+# 0.61.2. That last part is the whole point of pinning rather than taking
+# `"*"` or the newest release. `cast::<ICoreWebView2Settings3>()` converts a COM
+# pointer that the webview handed us, so the interface type has to come from the
+# same windows-core the webview was compiled against. A second copy in the tree
+# would be a nominally different type and the cast would not compile -- and the
+# error would point at the cast rather than at the duplicate, which is a bad
+# afternoon.
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
 # DECISIONS §10 sells this over Electron on binary size -- 5 MB against 150 MB --
 # so the release profile is tuned for size rather than compile time. This is a
 # thin shell around a webview; there is no hot loop here for opt-level to help.
