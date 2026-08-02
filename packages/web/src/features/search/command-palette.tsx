@@ -10,7 +10,14 @@
  * layer and Escape. The shared `Dialog` wrapper is not used because its titled
  * header and footer are exactly the chrome a palette should not have.
  */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 
 import { FileIcon, SearchIcon } from '../../shared/ui/icons'
 import { useWorkspaceStore } from '../../shared/workspace-store'
@@ -32,6 +39,18 @@ export function CommandPalette() {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * Last real pointer position, so hover cannot steal the keyboard's selection.
+   *
+   * The palette opens under wherever the cursor happens to be resting, and the
+   * browser dispatches a move as the dialog lands beneath it. Acting on that
+   * drags the selection off the first result -- so someone who types a filename
+   * and presses Enter opens whatever the mouse was sitting over instead. Only a
+   * move with an actual change in coordinates counts as the user pointing at
+   * something.
+   */
+  const pointerAt = useRef<{ x: number; y: number } | null>(null)
 
   const debounced = useDebounced(query)
   const options = { pattern: debounced, regex: false, caseSensitive: false }
@@ -256,8 +275,18 @@ export function CommandPalette() {
       // Pointer *move* rather than enter: scrolling the list under a stationary
       // cursor fires enter, which would drag the selection back to wherever the
       // mouse happens to be resting.
-      onPointerMove: () => {
-        if (!selected) setSelection(item.key)
+      //
+      // The coordinate check is the other half of that. Opening the dialog and
+      // scrolling the list both deliver a move event without the user having
+      // moved anything, and honouring those hands the selection to the mouse
+      // while someone is typing.
+      onPointerMove: (event: ReactPointerEvent) => {
+        const previous = pointerAt.current
+        const moved =
+          previous === null || previous.x !== event.clientX || previous.y !== event.clientY
+        pointerAt.current = { x: event.clientX, y: event.clientY }
+
+        if (moved && previous !== null && !selected) setSelection(item.key)
       },
       onClick: () => openItem(item),
     } as const
