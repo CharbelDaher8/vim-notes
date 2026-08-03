@@ -44,6 +44,14 @@ export interface FollowedLink {
 export interface WikiLinkContext {
   resolve: (target: string) => NotePath | null
   follow: (link: FollowedLink) => void
+  /**
+   * Every note that could be linked to, for completion.
+   *
+   * The same list `resolve` is closed over, handed out rather than hidden,
+   * because "which notes exist" is the question completion asks and `resolve`
+   * only answers it one name at a time.
+   */
+  paths: readonly NotePath[]
 }
 
 /**

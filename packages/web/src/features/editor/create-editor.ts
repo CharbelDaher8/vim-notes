@@ -38,6 +38,7 @@ import { editorTheme } from './editor-theme'
 import { findLinkAt, markdownDecorations } from './markdown-decorations'
 import { loadMarkdownLanguage, markdownLanguageExtension } from './markdown-language'
 import { vimExtension } from './vim-extension'
+import { loadWikiAutocomplete, wikiAutocompleteExtension } from './wikilink-autocomplete'
 import { wikiLinksExtension, type WikiLinkContext } from './wikilink-extension'
 
 /**
@@ -84,6 +85,7 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
   const keyboardCompartment = new Compartment()
   const gutterCompartment = new Compartment()
   const wikiLinkCompartment = new Compartment()
+  const completionCompartment = new Compartment()
 
   let vimEnabled = options.vimEnabled
   let dark = options.dark
@@ -122,6 +124,9 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
     languageCompartment.of(markdownLanguageExtension()),
     markdownDecorations,
     wikiLinkCompartment.of(wikiLinksExtension(wikiLinks)),
+    // Empty twice over at first: the chunk is not here yet and the client does
+    // not know which notes exist. `applyWikiLinks` runs again for each.
+    completionCompartment.of(wikiAutocompleteExtension(wikiLinks?.paths ?? null)),
     EditorView.lineWrapping,
     drawSelection(),
     dropCursor(),
@@ -235,11 +240,34 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
     })
   }
 
+  /**
+   * Bring the running editor in line with the notes that exist.
+   *
+   * Called from three places, which is the point: when the tree arrives, when
+   * the completion chunk lands, and by `setWikiLinks` afterwards. Each reads
+   * the current `wikiLinks` rather than the value that started its request, so
+   * whichever finishes last is still correct -- the same shape as `applyVim`,
+   * and for the same reason. Doing this only where the tree arrives would leave
+   * completion configured with an empty list on every editor whose chunk lands
+   * second, which is most of them.
+   */
+  const applyWikiLinks = () => {
+    if (destroyed) return
+    view.dispatch({
+      effects: [
+        wikiLinkCompartment.reconfigure(wikiLinksExtension(wikiLinks)),
+        completionCompartment.reconfigure(wikiAutocompleteExtension(wikiLinks?.paths ?? null)),
+      ],
+    })
+  }
+
   // Always wanted, just not needed for the first paint.
   void loadMarkdownLanguage().then(() => {
     if (destroyed) return
     view.dispatch({ effects: languageCompartment.reconfigure(markdownLanguageExtension()) })
   })
+
+  void loadWikiAutocomplete().then(applyWikiLinks)
 
   return {
     view,
@@ -275,7 +303,7 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
       // the pane has unmounted, and dispatching on a destroyed view throws.
       if (destroyed || context === wikiLinks) return
       wikiLinks = context
-      view.dispatch({ effects: wikiLinkCompartment.reconfigure(wikiLinksExtension(context)) })
+      applyWikiLinks()
     },
 
     reveal: (line, column = 1) => {

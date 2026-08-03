@@ -106,6 +106,58 @@ export function editorTheme(dark: boolean): Extension {
         backgroundColor: 'var(--surface-sunken)',
         color: 'var(--text)',
       },
+
+      /*
+       * The wiki link completion list.
+       *
+       * Restyled rather than left alone because CodeMirror's default is a
+       * system-blue selection on white, which is the one surface in the app
+       * that would not be wearing the palette -- and it appears directly over
+       * the note, where the mismatch is impossible to miss.
+       */
+      '.cm-tooltip.cm-tooltip-autocomplete': {
+        border: '1px solid var(--border-strong)',
+        borderRadius: 'var(--radius-sm)',
+        backgroundColor: 'var(--surface-raised)',
+        boxShadow: 'var(--shadow-lg)',
+        // Clear of the caret, so the line being typed stays readable.
+        marginTop: '0.25rem',
+        overflow: 'hidden',
+      },
+
+      '.cm-tooltip-autocomplete > ul': {
+        maxHeight: '14rem',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 'var(--text-sm)',
+      },
+
+      '.cm-tooltip-autocomplete > ul > li': {
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: '0.6rem',
+        padding: '0.25rem 0.6rem',
+        color: 'var(--text)',
+        lineHeight: '1.5',
+      },
+
+      '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+        backgroundColor: 'var(--accent-soft)',
+        color: 'var(--text)',
+      },
+
+      // What is about to be written, when it differs from the path above it.
+      '.cm-completionDetail': {
+        marginLeft: 'auto',
+        color: 'var(--text-faint)',
+        fontStyle: 'normal',
+      },
+
+      // The characters that matched what has been typed so far.
+      '.cm-completionMatchedText': {
+        color: 'var(--accent)',
+        fontWeight: '600',
+        textDecoration: 'none',
+      },
     },
     { dark },
   )

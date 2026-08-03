@@ -32,6 +32,7 @@ export function useWikiLinks(): WikiLinks {
     if (paths === null) return null
 
     return {
+      paths,
       resolve: (target) => resolveWikiTarget(paths, target),
       follow: (link) => {
         // Following a link to a note that does not exist is how a note gets
