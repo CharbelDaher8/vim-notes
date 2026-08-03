@@ -30,6 +30,7 @@ import {
   type NodePtyTerminalHostOptions,
   type PtySession,
 } from './node-pty-terminal-host'
+import { itPtyDelivery } from './pty-delivery-gate'
 
 const hosts: NodePtyTerminalHost[] = []
 const roots: string[] = []
@@ -181,58 +182,64 @@ describe('NodePtyTerminalHost', () => {
     expect(session.rows).toBe(1000)
   })
 
-  it('delivers output as bytes and holds multibyte characters across chunk boundaries', async () => {
-    const root = await makeRoot()
+  // The one case in this file that asserts pty *delivery* rather than this
+  // adapter's behaviour, so it carries the same Linux-CI flake as the
+  // diagnostic and is gated the same way. Everything else here runs everywhere.
+  itPtyDelivery(
+    'delivers output as bytes and holds multibyte characters across chunk boundaries',
+    async () => {
+      const root = await makeRoot()
 
-    // Big enough that the tty buffer splits it into a couple of hundred reads,
-    // and made entirely of three- and four-byte characters so most of those
-    // splits land mid-character. Decoding chunk-at-a-time turns this into a
-    // screenful of replacement characters, which is exactly the bug the
-    // StringDecoder in the session exists to prevent.
-    const content = '─'.repeat(60_000) + '😀'.repeat(5_000)
-    const file = nodePath.join(root, 'boxes.txt')
-    await fs.writeFile(file, content, 'utf8')
+      // Big enough that the tty buffer splits it into a couple of hundred reads,
+      // and made entirely of three- and four-byte characters so most of those
+      // splits land mid-character. Decoding chunk-at-a-time turns this into a
+      // screenful of replacement characters, which is exactly the bug the
+      // StringDecoder in the session exists to prevent.
+      const content = '─'.repeat(60_000) + '😀'.repeat(5_000)
+      const file = nodePath.join(root, 'boxes.txt')
+      await fs.writeFile(file, content, 'utf8')
 
-    const host = makeHost(root, { command: '/bin/cat', args: [file] })
-    const session = await host.spawn({ cols: 80, rows: 24 })
-    const output = collect(session)
+      const host = makeHost(root, { command: '/bin/cat', args: [file] })
+      const session = await host.spawn({ cols: 80, rows: 24 })
+      const output = collect(session)
 
-    await session.waitForExit()
+      await session.waitForExit()
 
-    const expected = Buffer.from(content, 'utf8')
-    const got = output.bytes()
+      const expected = Buffer.from(content, 'utf8')
+      const got = output.bytes()
 
-    // Asserted through a description first, and only then as the plain byte
-    // comparison. This is the one test here whose failures have historically
-    // shown up on a machine the person reading them cannot touch, and `expected
-    // false to be true` is not a bug report. A short but otherwise perfect
-    // prefix means the tail went missing as the child died; anything else means
-    // bytes were altered or dropped mid-stream, which has a different cause.
-    //
-    // That description earned itself once already. This test failed on Linux CI
-    // and only there, and the sentence it produced -- "truncated: an exact
-    // prefix, 3397 of 200000 trailing bytes never arrived" -- settled in one run
-    // what the boolean could not: nothing was corrupting bytes, something below
-    // this adapter was dropping the end of the stream.
-    //
-    // It passes on Linux now, and nobody should read that as fixed. Neither the
-    // scrollback default nor the exit drain nor the transport's flow control can
-    // explain the change -- this test constructs no socket and never pauses --
-    // so the likeliest reading is that the fault is intermittent. The suspect is
-    // node-pty destroying the pty master 200ms after reaping the child, which
-    // fires when the event loop stalls that long and so shows up on a loaded
-    // runner and not an idle one. Nothing in this repository can prevent it: the
-    // bytes are gone before the adapter is told the child exited.
-    //
-    // So if this goes red on CI again with a shortfall that moves between runs,
-    // it is that, and the honest response is to record it rather than to hunt
-    // for a regression that is not here. `pty-truncation-diagnostic.test.ts`
-    // exists to tell those two cases apart.
-    expect(describeAgainst(got, expected)).toBe('identical')
-    expect(got.equals(expected)).toBe(true)
-    expect(output.text()).toBe(content)
-    expect(output.text()).not.toContain('�')
-  })
+      // Asserted through a description first, and only then as the plain byte
+      // comparison. This is the one test here whose failures have historically
+      // shown up on a machine the person reading them cannot touch, and `expected
+      // false to be true` is not a bug report. A short but otherwise perfect
+      // prefix means the tail went missing as the child died; anything else means
+      // bytes were altered or dropped mid-stream, which has a different cause.
+      //
+      // That description earned itself once already. This test failed on Linux CI
+      // and only there, and the sentence it produced -- "truncated: an exact
+      // prefix, 3397 of 200000 trailing bytes never arrived" -- settled in one run
+      // what the boolean could not: nothing was corrupting bytes, something below
+      // this adapter was dropping the end of the stream.
+      //
+      // It passes on Linux now, and nobody should read that as fixed. Neither the
+      // scrollback default nor the exit drain nor the transport's flow control can
+      // explain the change -- this test constructs no socket and never pauses --
+      // so the likeliest reading is that the fault is intermittent. The suspect is
+      // node-pty destroying the pty master 200ms after reaping the child, which
+      // fires when the event loop stalls that long and so shows up on a loaded
+      // runner and not an idle one. Nothing in this repository can prevent it: the
+      // bytes are gone before the adapter is told the child exited.
+      //
+      // So if this goes red on CI again with a shortfall that moves between runs,
+      // it is that, and the honest response is to record it rather than to hunt
+      // for a regression that is not here. `pty-truncation-diagnostic.test.ts`
+      // exists to tell those two cases apart.
+      expect(describeAgainst(got, expected)).toBe('identical')
+      expect(got.equals(expected)).toBe(true)
+      expect(output.text()).toBe(content)
+      expect(output.text()).not.toContain('�')
+    },
+  )
 
   it('reports the exit code', async () => {
     const root = await makeRoot()

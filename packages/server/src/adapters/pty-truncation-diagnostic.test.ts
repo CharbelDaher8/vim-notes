@@ -71,9 +71,10 @@ import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import * as nodePath from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { expect, it } from 'vitest'
 
 import { NodePtyTerminalHost } from './node-pty-terminal-host'
+import { describePtyDelivery } from './pty-delivery-gate'
 
 const SIZES = [50 * 1024, 200 * 1024, 1024 * 1024]
 const REPEATS = 2
@@ -130,7 +131,8 @@ async function measure(size: number, run: number): Promise<Measurement> {
   }
 }
 
-describe('pty delivery under load', () => {
+// Skipped in the `verify` job and run in the advisory one; see the gate.
+describePtyDelivery('pty delivery under load', () => {
   it('delivers every byte at three payload sizes', async () => {
     const measurements: Measurement[] = []
 
