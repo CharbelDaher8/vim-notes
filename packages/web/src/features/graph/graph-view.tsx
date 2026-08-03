@@ -24,12 +24,13 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 
 import { useWorkspaceStore } from '../../shared/workspace-store'
-import { layoutBounds, type Layout, type Vec } from './force-layout'
+import { layoutBounds, pinNode, unpinAll, type Layout, type Vec } from './force-layout'
 import {
   buildScene,
   LABEL_FONT_SIZE,
@@ -39,6 +40,7 @@ import {
   type NodeShape,
   type SceneNode,
 } from './graph-scene'
+import { readPins, writePins } from './pin-storage'
 import { useGraph, useGraphSync } from './use-graph'
 import { useSimulation } from './use-simulation'
 import {
@@ -49,6 +51,7 @@ import {
   midpointOf,
   panBy,
   pinchViewport,
+  toWorld,
   wheelZoomFactor,
   zoomAround,
   type PinchStart,
@@ -68,6 +71,25 @@ const EMPTY_GRAPH: NoteGraph = { nodes: [], edges: [] }
  * pixels pans the graph, and the gesture is read as a drag.
  */
 const TAP_SLOP = 6
+
+/** How far one press of shift-arrow moves the focused node, in CSS pixels. */
+const KEY_NUDGE = 12
+
+/** How long after the last move a rearrangement is written to storage. */
+const PERSIST_DELAY = 500
+
+interface Drag {
+  pointerId: number
+  id: string
+  index: number
+  /**
+   * World-space distance from the pointer to the node's centre when it was
+   * grabbed. Without it the node jumps so its centre is under the finger, which
+   * on a big node is a visible lurch at the start of every drag.
+   */
+  offset: Vec
+  travelled: number
+}
 
 export interface GraphViewProps {
   /** Merged with the feature's own class, for whatever mounts this. */
@@ -100,6 +122,22 @@ export function GraphView({ className }: GraphViewProps) {
   const pinchRef = useRef<PinchStart | null>(null)
   const draggedRef = useRef(false)
   const focusedRef = useRef(0)
+
+  /*
+   * Where the nodes someone moved by hand belong, by id.
+   *
+   * The durable copy, and deliberately not React state: it is written on every
+   * frame of a drag, and re-rendering a thousand nodes to move one of them is
+   * the thing this whole component is arranged to avoid. Only the count is
+   * state, because only the count is rendered.
+   */
+  const pinsRef = useRef<Map<string, Vec> | null>(null)
+  pinsRef.current ??= readPins()
+
+  const [pinCount, setPinCount] = useState(() => pinsRef.current?.size ?? 0)
+
+  const dragRef = useRef<Drag | null>(null)
+  const persistRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const arrowId = useId()
   const hintId = useId()
@@ -148,14 +186,56 @@ export function GraphView({ className }: GraphViewProps) {
   const labelledRef = useRef(scene.labelled)
   labelledRef.current = scene.labelled
 
+  /**
+   * Mark the pinned nodes on the elements React just rendered.
+   *
+   * From `pinsRef` rather than from the layout, because this runs on a scene
+   * change and the layout is rebuilt by the simulation's own effect, which is
+   * registered later and therefore runs after this one. The pins are the same
+   * either way; only one of the two is guaranteed to be current here.
+   */
+  const markPins = useCallback(() => {
+    const pins = pinsRef.current
+    if (pins === null) return
+
+    for (const [index, node] of scene.nodes.entries()) {
+      const element = nodeRefs.current[index]
+      if (element == null) continue
+
+      if (pins.has(node.id)) element.setAttribute('data-pinned', '')
+      else element.removeAttribute('data-pinned')
+    }
+  }, [scene])
+
+  const persistSoon = useCallback(() => {
+    clearTimeout(persistRef.current)
+    // Debounced because a drag would otherwise serialise the whole arrangement
+    // sixty times a second, and an arrow key held down would do it faster.
+    persistRef.current = setTimeout(() => {
+      if (pinsRef.current !== null) writePins(pinsRef.current)
+    }, PERSIST_DELAY)
+  }, [])
+
+  // Whatever is pending when this unmounts is a rearrangement someone made and
+  // would expect to find again -- and navigating away is exactly when the timer
+  // is most likely to still be waiting.
+  useEffect(
+    () => () => {
+      clearTimeout(persistRef.current)
+      if (pinsRef.current !== null) writePins(pinsRef.current)
+    },
+    [],
+  )
+
   useEffect(() => {
     nodeRefs.current.length = scene.nodes.length
     edgeRefs.current.length = scene.edges.length
     focusedRef.current = 0
+    markPins()
     // A scene can cross the label limit without the view moving at all, and the
     // label mode is derived from both.
     applyView()
-  }, [applyView, scene])
+  }, [applyView, markPins, scene])
 
   const draw = useCallback(
     (layout: Layout) => {
@@ -194,7 +274,42 @@ export function GraphView({ className }: GraphViewProps) {
     [applyView, trims],
   )
 
-  const { layoutRef, running } = useSimulation(scene, draw)
+  const { layoutRef, running, nudge } = useSimulation(scene, draw, { pins: pinsRef })
+
+  /** Hold a node at a world point, and remember that someone put it there. */
+  const pinAt = useCallback(
+    (index: number, id: string, point: Vec) => {
+      const layout = layoutRef.current
+      if (layout === null) return
+
+      pinNode(layout, id, point)
+      pinsRef.current?.set(id, point)
+      nodeRefs.current[index]?.setAttribute('data-pinned', '')
+
+      setPinCount(pinsRef.current?.size ?? 0)
+      persistSoon()
+      // The layout has almost certainly settled and stopped booking frames by
+      // the time anyone drags anything, so without this the node would hold its
+      // new position and never be painted in it.
+      nudge()
+    },
+    [layoutRef, nudge, persistSoon],
+  )
+
+  const releaseAll = useCallback(() => {
+    const layout = layoutRef.current
+    if (layout !== null) unpinAll(layout)
+
+    pinsRef.current?.clear()
+    for (const element of nodeRefs.current) element?.removeAttribute('data-pinned')
+
+    setPinCount(0)
+    persistSoon()
+    // Warmer than a drag: this is a request for the graph to lay itself out
+    // again, and at drag heat it would barely move off the arrangement being
+    // abandoned.
+    nudge(0.5)
+  }, [layoutRef, nudge, persistSoon])
 
   const fit = useCallback(() => {
     const layout = layoutRef.current
@@ -258,6 +373,23 @@ export function GraphView({ className }: GraphViewProps) {
       }
       pointers.set(event.pointerId, point)
 
+      const drag = dragRef.current
+      if (drag !== null && drag.pointerId === event.pointerId) {
+        drag.travelled += Math.hypot(point.x - previous.x, point.y - previous.y)
+        // Under the slop this is still a tap in progress, and pinning a node
+        // someone only meant to open would leave pins scattered everywhere.
+        if (drag.travelled <= TAP_SLOP) return
+
+        draggedRef.current = true
+        // The view is not moving, but an unframed one refits itself every frame
+        // while the layout is warm -- and a drag makes it warm.
+        framedRef.current = true
+
+        const world = toWorld(viewRef.current, point)
+        pinAt(drag.index, drag.id, { x: world.x + drag.offset.x, y: world.y + drag.offset.y })
+        return
+      }
+
       const pinch = pinchRef.current
       if (pinch !== null && pointers.size >= 2) {
         const [a, b] = [...pointers.values()]
@@ -291,6 +423,8 @@ export function GraphView({ className }: GraphViewProps) {
       const pointers = pointersRef.current
       pointers.delete(event.pointerId)
 
+      if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null
+
       if (pointers.size < 2) pinchRef.current = null
 
       if (pointers.size === 0) {
@@ -313,7 +447,7 @@ export function GraphView({ className }: GraphViewProps) {
       window.removeEventListener('pointerup', onRelease)
       window.removeEventListener('pointercancel', onRelease)
     }
-  }, [setView])
+  }, [pinAt, setView])
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     // Re-read here rather than only on resize: the surface also moves when the
@@ -322,13 +456,40 @@ export function GraphView({ className }: GraphViewProps) {
     measure()
 
     const pointers = pointersRef.current
-    pointers.set(event.pointerId, {
+    const point = {
       x: event.clientX - originRef.current.x,
       y: event.clientY - originRef.current.y,
-    })
+    }
+    pointers.set(event.pointerId, point)
 
     if (pointers.size === 1) {
       draggedRef.current = false
+
+      // A press that landed on a node moves that node; anywhere else moves the
+      // view. Hit-tested from the event target rather than against the
+      // positions, because the browser has already done it -- and it did it
+      // against the shapes actually painted, including the oversized invisible
+      // circle that exists to be hittable by a thumb.
+      const index = nodeIndexAt(event.target)
+
+      if (index !== null) {
+        const node = scene.nodes[index]
+        const placed = layoutRef.current?.nodes[index]
+
+        if (node !== undefined && placed !== undefined) {
+          const world = toWorld(viewRef.current, point)
+          panRef.current = null
+          dragRef.current = {
+            pointerId: event.pointerId,
+            id: node.id,
+            index,
+            offset: { x: placed.x - world.x, y: placed.y - world.y },
+            travelled: 0,
+          }
+          return
+        }
+      }
+
       panRef.current = { pointerId: event.pointerId, travelled: 0 }
       return
     }
@@ -336,6 +497,9 @@ export function GraphView({ className }: GraphViewProps) {
     const [a, b] = [...pointers.values()]
     if (a === undefined || b === undefined) return
 
+    // A second finger turns a node drag into a pinch. Fighting over which one
+    // the gesture is would be worse than picking the one that moves the view.
+    dragRef.current = null
     panRef.current = null
     pinchRef.current = {
       view: viewRef.current,
@@ -392,10 +556,50 @@ export function GraphView({ className }: GraphViewProps) {
     fit()
   }, [fit])
 
+  /**
+   * Move the focused node, for people who are not holding a pointer.
+   *
+   * Bound to shift-arrow rather than to a mode, so it is one key away from the
+   * arrows that already walk the graph. Moving a node this way pins it, exactly
+   * as dragging it does -- there is no third state where a node has been placed
+   * but is not being held.
+   */
+  const moveFocused = (dx: number, dy: number) => {
+    const index = focusedRef.current
+    const node = scene.nodes[index]
+    const placed = layoutRef.current?.nodes[index]
+    if (node === undefined || placed === undefined) return
+
+    // Divided by the scale so a press moves the same distance on the screen at
+    // any zoom, rather than a fixed distance in the world.
+    const distance = KEY_NUDGE / viewRef.current.k
+    pinAt(index, node.id, { x: placed.x + dx * distance, y: placed.y + dy * distance })
+  }
+
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const step = (delta: number) => {
       event.preventDefault()
       focusNode(focusedRef.current + delta)
+    }
+
+    const move = (dx: number, dy: number) => {
+      event.preventDefault()
+      moveFocused(dx, dy)
+    }
+
+    if (event.shiftKey) {
+      switch (event.key) {
+        case 'ArrowLeft':
+          return move(-1, 0)
+        case 'ArrowRight':
+          return move(1, 0)
+        case 'ArrowUp':
+          return move(0, -1)
+        case 'ArrowDown':
+          return move(0, 1)
+        default:
+          break
+      }
     }
 
     switch (event.key) {
@@ -507,6 +711,9 @@ export function GraphView({ className }: GraphViewProps) {
                     nodeRefs.current[index] = element
                   }}
                   className="graph__node"
+                  // Read back by `nodeIndexAt` to turn a press on any shape
+                  // inside this group into the node it belongs to.
+                  data-index={index}
                   data-kind={node.kind}
                   data-tone={node.tone}
                   data-done={node.done || undefined}
@@ -595,11 +802,26 @@ export function GraphView({ className }: GraphViewProps) {
           <button type="button" className="icon-button" aria-label="Fit to view" onClick={refit}>
             <Frame />
           </button>
+
+          {/* Only there when there is something to undo. A permanent control
+              for a state nobody is in is a control that has to be explained. */}
+          {pinCount === 0 ? null : (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Release ${pinCount} pinned ${pinCount === 1 ? 'node' : 'nodes'}`}
+              title="Let the graph lay itself out again"
+              onClick={releaseAll}
+            >
+              <Unpin />
+            </button>
+          )}
         </div>
 
         <p id={hintId} className="visually-hidden">
-          Arrow keys move between nodes, Enter opens one. Plus and minus zoom, 0 fits the graph to
-          the window. Drag to pan, pinch or scroll to zoom.
+          Arrow keys move between nodes, Enter opens one. Shift with an arrow key moves the focused
+          node and pins it there. Plus and minus zoom, 0 fits the graph to the window. Drag a node
+          to place it, drag the background to pan, pinch or scroll to zoom.
         </p>
       </div>
 
@@ -652,6 +874,24 @@ export function GraphView({ className }: GraphViewProps) {
 /** Containment and day membership are obvious from proximity; links are not. */
 function directed(kind: GraphEdgeKind): boolean {
   return kind === 'link' || kind === 'unresolved'
+}
+
+/**
+ * Which node a press landed on, or null for the background.
+ *
+ * The target is whichever shape was actually hit -- a glyph, a label, the
+ * invisible hit circle -- so this climbs to the group that owns it. `closest`
+ * works on SVG elements, which is the only reason the index can live in an
+ * attribute rather than in a map built per render.
+ */
+function nodeIndexAt(target: EventTarget | null): number | null {
+  if (!(target instanceof Element)) return null
+
+  const group = target.closest('.graph__node')
+  if (group === null) return null
+
+  const index = Number(group.getAttribute('data-index'))
+  return Number.isInteger(index) && index >= 0 ? index : null
 }
 
 function NodeGlyph({ shape, radius, done }: { shape: NodeShape; radius: number; done: boolean }) {
@@ -750,5 +990,12 @@ const ZoomOut = () => (
 const Frame = () => (
   <svg {...ICON}>
     <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+  </svg>
+)
+
+/** A pin, struck through. Same silhouette as the marker on a pinned node. */
+const Unpin = () => (
+  <svg {...ICON}>
+    <path d="M12 17v4M9.5 4h5l-.7 5 2.7 3v2H7.5v-2l2.7-3-.7-5ZM4 4l16 16" />
   </svg>
 )

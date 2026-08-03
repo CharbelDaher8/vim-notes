@@ -55,6 +55,16 @@ export interface LayoutNode {
   /** Half-extents of the box nothing else may overlap. See `separation`. */
   spreadX: number
   spreadY: number
+  /**
+   * Held where it was put, by someone dragging it.
+   *
+   * A fixed node is skipped by the integrator but not by the forces: everything
+   * else still feels its repulsion and still hangs off its springs, which is the
+   * whole point of pinning one. Dropping it out of `accumulate` instead would
+   * make a pinned hub stop pushing its neighbours apart and let them pile on top
+   * of it.
+   */
+  fixed: boolean
 }
 
 export interface LayoutEdgeInput {
@@ -246,11 +256,18 @@ export interface Bounds {
  * every time someone types. Anything already placed keeps its coordinates and
  * the simulation carries on from there, so a save nudges the graph instead of
  * throwing it in the air.
+ *
+ * `pinned` is the same idea for positions a person chose by hand, and it is
+ * separate from `previous` rather than folded into it because the two survive
+ * different things: a carried position is a starting guess the physics is free
+ * to overrule, and a pin is not. Ids that are not in this layout are ignored,
+ * which is what lets the caller hand over a set saved before a note was renamed.
  */
 export function createLayout(
   input: LayoutInput,
   overrides: Partial<LayoutOptions> = {},
   previous?: ReadonlyMap<string, Vec> | null,
+  pinned?: ReadonlyMap<string, Vec> | null,
 ): Layout {
   const options = { ...DEFAULT_LAYOUT_OPTIONS, ...overrides }
 
@@ -265,7 +282,10 @@ export function createLayout(
     // the only reading that keeps the picture consistent with the data.
     if (byId.has(id)) continue
 
-    const carried = previous?.get(id)
+    // A pin outranks a carried position, and both outrank the seed: the pin is
+    // where someone put this node on purpose.
+    const pin = pinned?.get(id)
+    const carried = pin ?? previous?.get(id)
     const seed = carried ?? seedPosition(id, radius)
     const node: LayoutNode = {
       id,
@@ -278,6 +298,7 @@ export function createLayout(
       charge: 1,
       spreadX: input_.spreadX ?? 0,
       spreadY: input_.spreadY ?? 0,
+      fixed: pin !== undefined,
     }
 
     nodes.push(node)
@@ -340,6 +361,7 @@ export function step(layout: Layout): number {
   const half = timeStep / 2
 
   for (const node of layout.nodes) {
+    if (node.fixed) continue
     node.x += node.vx * timeStep + node.ax * half * timeStep
     node.y += node.vy * timeStep + node.ay * half * timeStep
     node.vx += node.ax * half
@@ -351,6 +373,15 @@ export function step(layout: Layout): number {
   let peak = 0
 
   for (const node of layout.nodes) {
+    // A pinned node is not still, it is held -- so it contributes no speed and
+    // keeps none. Letting its velocity accumulate while it cannot move would
+    // fire it across the picture the moment it was released.
+    if (node.fixed) {
+      node.vx = 0
+      node.vy = 0
+      continue
+    }
+
     node.vx = (node.vx + node.ax * half) * damping
     node.vy = (node.vy + node.ay * half) * damping
 
@@ -413,6 +444,54 @@ export function layoutPositions(layout: Layout): Map<string, Vec> {
   const positions = new Map<string, Vec>()
   for (const node of layout.nodes) positions.set(node.id, { x: node.x, y: node.y })
   return positions
+}
+
+/** The same, for `pinned`: only the nodes someone placed by hand. */
+export function layoutPins(layout: Layout): Map<string, Vec> {
+  const pins = new Map<string, Vec>()
+  for (const node of layout.nodes) if (node.fixed) pins.set(node.id, { x: node.x, y: node.y })
+  return pins
+}
+
+/**
+ * Put some heat back in, so a settled layout starts moving again.
+ *
+ * Needed because settling is deliberately terminal: `isSettled` is what makes
+ * the animation loop stop booking frames, and `start` declines on a layout that
+ * is already settled. Dragging a node is the first thing in this view that
+ * changes the graph without replacing it, so it is the first thing that needs a
+ * way back.
+ *
+ * `ticks` is reset along with the heat, which makes `maxTicks` a budget per
+ * warm-up rather than per layout. That is the reading that matches what it is
+ * for: a backstop against a loop that will not stop, not a lifetime allowance
+ * that quietly runs out on a graph somebody has been rearranging for an hour.
+ */
+export function reheat(layout: Layout, alpha: number): void {
+  layout.alpha = Math.min(1, Math.max(layout.alpha, alpha))
+  layout.stillFor = 0
+  layout.ticks = 0
+}
+
+/** Hold a node at a point. Idempotent, and unknown ids are ignored. */
+export function pinNode(layout: Layout, id: string, point: Vec): void {
+  const node = layout.byId.get(id)
+  if (node === undefined) return
+
+  node.x = point.x
+  node.y = point.y
+  node.vx = 0
+  node.vy = 0
+  node.fixed = true
+}
+
+export function unpinNode(layout: Layout, id: string): void {
+  const node = layout.byId.get(id)
+  if (node !== undefined) node.fixed = false
+}
+
+export function unpinAll(layout: Layout): void {
+  for (const node of layout.nodes) node.fixed = false
 }
 
 /** The box every node fits in. Empty layouts get a unit box, never NaN. */
@@ -818,7 +897,10 @@ function placeNewcomers(layout: Layout, previous?: ReadonlyMap<string, Vec> | nu
   const anchors = new Map<string, Vec[]>()
 
   const consider = (node: LayoutNode, neighbour: LayoutNode) => {
-    if (previous.has(node.id)) return
+    // A pin is a position too, even for a node this layout is seeing for the
+    // first time -- restoring one saved before the app was reloaded arrives
+    // exactly that way.
+    if (node.fixed || previous.has(node.id)) return
     const known = previous.get(neighbour.id)
     if (known === undefined) return
 

@@ -5,8 +5,13 @@ import {
   isExhausted,
   isSettled,
   layoutBounds,
+  layoutPins,
   layoutPositions,
+  pinNode,
+  reheat,
   step,
+  unpinAll,
+  unpinNode,
   type Layout,
   type LayoutNode,
   type Vec,
@@ -691,5 +696,161 @@ describe('layoutPositions', () => {
     )
 
     expect(layoutPositions(second)).toEqual(layoutPositions(first))
+  })
+})
+
+describe('pinning', () => {
+  const linked = { nodes: ids(6), edges: [{ from: 'n0', to: 'n1' }] }
+
+  it('holds a pinned node exactly where it was put', () => {
+    const layout = createLayout(linked)
+    pinNode(layout, 'n0', { x: 300, y: -120 })
+
+    run(layout, 200)
+
+    expect(at(layout, 'n0').x).toBe(300)
+    expect(at(layout, 'n0').y).toBe(-120)
+  })
+
+  /**
+   * The half of the design that is easy to get wrong. Skipping a fixed node in
+   * `accumulate` rather than in the integrator would be simpler and would look
+   * identical for the pinned node itself -- and would quietly stop it repelling
+   * anything, so its neighbours would drift through it.
+   */
+  it('keeps pushing and pulling everything else', () => {
+    const free = createLayout(linked, {}, placed({ n1: { x: 40, y: 0 } }))
+    const held = createLayout(linked, {}, placed({ n1: { x: 40, y: 0 } }))
+    pinNode(held, 'n0', { x: 0, y: 0 })
+
+    run(free, 120)
+    run(held, 120)
+
+    // Its partner sits where it would have sat if nothing were pinned -- the
+    // spring against the same repulsion, balancing a little past rest length.
+    expect(apart(held, 'n0', 'n1')).toBeCloseTo(apart(free, 'n0', 'n1'), -1)
+
+    // ...and the unconnected ones are still pushed away rather than settling on
+    // top of a node the integrator is ignoring.
+    for (const id of ['n2', 'n3', 'n4', 'n5']) {
+      expect(apart(held, 'n0', id)).toBeGreaterThan(20)
+    }
+  })
+
+  it('gives a released node no accumulated velocity to spend', () => {
+    const layout = createLayout(linked)
+    // Somewhere every other node is pushing hard against.
+    pinNode(layout, 'n0', { x: 0, y: 0 })
+    run(layout, 80)
+
+    expect(at(layout, 'n0').vx).toBe(0)
+    expect(at(layout, 'n0').vy).toBe(0)
+
+    unpinNode(layout, 'n0')
+    const before = { x: at(layout, 'n0').x, y: at(layout, 'n0').y }
+    step(layout)
+
+    // It may start drifting under the forces, but it may not be flung.
+    expect(Math.hypot(at(layout, 'n0').x - before.x, at(layout, 'n0').y - before.y)).toBeLessThan(2)
+  })
+
+  it('does not count a held node as motion', () => {
+    const layout = createLayout({ nodes: [{ id: 'a' }, { id: 'b' }], edges: [] })
+    pinNode(layout, 'a', { x: 1000, y: 0 })
+    pinNode(layout, 'b', { x: -1000, y: 0 })
+
+    step(layout)
+
+    expect(layout.peakSpeed).toBe(0)
+  })
+
+  it('carries pins through the rebuild a save causes', () => {
+    const first = createLayout(linked)
+    pinNode(first, 'n0', { x: 210, y: 90 })
+    run(first, 40)
+
+    const second = createLayout(linked, {}, layoutPositions(first), layoutPins(first))
+
+    expect(layoutPins(second)).toEqual(new Map([['n0', { x: 210, y: 90 }]]))
+    run(second, 200)
+    expect(at(second, 'n0')).toMatchObject({ x: 210, y: 90 })
+  })
+
+  it('ignores a pin for a note that no longer exists', () => {
+    const layout = createLayout(linked, {}, null, placed({ gone: { x: 5, y: 5 } }))
+
+    expect(layout.byId.has('gone')).toBe(false)
+    expect(layoutPins(layout).size).toBe(0)
+  })
+
+  it('places a restored pin ahead of the seed, not beside its neighbours', () => {
+    // `placeNewcomers` moves anything the previous layout did not have next to
+    // whatever it links to. A pin restored from storage arrives looking exactly
+    // like that, and moving it would put it somewhere nobody asked for.
+    const layout = createLayout(
+      linked,
+      {},
+      placed({ n1: { x: -400, y: -400 } }),
+      placed({ n0: { x: 60, y: 60 } }),
+    )
+
+    expect(at(layout, 'n0')).toMatchObject({ x: 60, y: 60 })
+  })
+
+  it('lets go of every pin at once', () => {
+    const layout = createLayout(linked)
+    pinNode(layout, 'n0', { x: 100, y: 0 })
+    pinNode(layout, 'n1', { x: -100, y: 0 })
+
+    unpinAll(layout)
+
+    expect(layoutPins(layout).size).toBe(0)
+    expect(layout.nodes.every((node) => !node.fixed)).toBe(true)
+  })
+})
+
+describe('reheat', () => {
+  it('gets a settled layout moving again', () => {
+    const layout = createLayout({ nodes: ids(20), edges: [] })
+    runUntilSettled(layout)
+    expect(isSettled(layout)).toBe(true)
+
+    reheat(layout, 0.3)
+
+    expect(isSettled(layout)).toBe(false)
+    expect(layout.alpha).toBe(0.3)
+  })
+
+  /**
+   * The tick ceiling is a settle condition in its own right, so a layout that
+   * has been dragged around all afternoon would refuse to warm up again if the
+   * count carried over. That would look like dragging simply stopping working
+   * after a while, which is the worst kind of bug to be told about.
+   */
+  it('clears the tick count, so the ceiling cannot make it permanent', () => {
+    const layout = createLayout({ nodes: ids(20), edges: [] })
+    layout.ticks = layout.options.maxTicks
+
+    reheat(layout, 0.3)
+
+    expect(layout.ticks).toBe(0)
+    expect(isSettled(layout)).toBe(false)
+  })
+
+  it('never cools a layout that is already hotter', () => {
+    const layout = createLayout({ nodes: ids(20), edges: [] })
+
+    reheat(layout, 0.2)
+
+    expect(layout.alpha).toBe(1)
+  })
+
+  it('cannot be driven past a cold start', () => {
+    const layout = createLayout({ nodes: ids(20), edges: [] })
+    runUntilSettled(layout)
+
+    reheat(layout, 40)
+
+    expect(layout.alpha).toBe(1)
   })
 })

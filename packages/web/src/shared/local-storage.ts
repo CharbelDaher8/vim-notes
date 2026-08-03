@@ -27,4 +27,6 @@ export const SETTING_KEYS = {
   vimMode: 'vim-notes:vim-mode',
   sidebarWidth: 'vim-notes:sidebar-width',
   backlinks: 'vim-notes:backlinks',
+  graphPanel: 'vim-notes:graph-panel',
+  graphPins: 'vim-notes:graph-pins',
 } as const

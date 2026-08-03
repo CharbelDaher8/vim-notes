@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 import {
   createLayout,
   layoutPositions,
+  reheat,
   type Layout,
   type LayoutOptions,
   type Vec,
 } from './force-layout'
 import type { Scene } from './graph-scene'
-import { browserFrameHost, createSimulationLoop } from './simulation-loop'
+import { browserFrameHost, createSimulationLoop, type SimulationLoop } from './simulation-loop'
 
 /**
  * The layout's lifetime across React renders: build it, drive it, and hand its
@@ -28,6 +29,27 @@ export interface Simulation {
   layoutRef: RefObject<Layout | null>
   /** Whether frames are currently being scheduled. */
   running: boolean
+  /**
+   * Put some heat back in and start the loop again.
+   *
+   * For changes made to the layout in place, which means dragging: the loop
+   * stops for good once the graph settles, so a node moved after that would
+   * hold its new position and never be drawn in it, and its neighbours would
+   * never make room.
+   */
+  nudge: (alpha?: number) => void
+}
+
+export interface SimulationOptions {
+  overrides?: Partial<LayoutOptions>
+  /**
+   * Nodes held where someone put them, by id.
+   *
+   * A ref rather than a value because it is read at every rebuild and changes
+   * on every frame of a drag: as a dependency it would tear the simulation down
+   * and start the layout again mid-gesture.
+   */
+  pins?: RefObject<ReadonlyMap<string, Vec> | null>
 }
 
 /**
@@ -37,15 +59,26 @@ export interface Simulation {
  */
 const REDUCED_MOTION_STEPS = 8
 
+/**
+ * How warm a drag makes the graph.
+ *
+ * Low on purpose. Enough that the neighbours of the node under the finger
+ * shuffle over to make room, not so much that the rest of the picture
+ * rearranges itself while somebody is trying to tidy one corner of it.
+ */
+const DRAG_HEAT = 0.15
+
 export function useSimulation(
   scene: Scene,
   draw: (layout: Layout) => void,
-  overrides?: Partial<LayoutOptions>,
+  options: SimulationOptions = {},
 ): Simulation {
   const layoutRef = useRef<Layout | null>(null)
+  const loopRef = useRef<SimulationLoop | null>(null)
   const carriedRef = useRef<Map<string, Vec> | null>(null)
   const drawRef = useRef(draw)
-  const optionsRef = useRef(overrides)
+  const optionsRef = useRef(options.overrides)
+  const pinsRef = options.pins
 
   const [running, setRunning] = useState(false)
 
@@ -54,7 +87,7 @@ export function useSimulation(
   // and start the layout again from nothing.
   useEffect(() => {
     drawRef.current = draw
-    optionsRef.current = overrides
+    optionsRef.current = options.overrides
   })
 
   useEffect(() => {
@@ -74,6 +107,8 @@ export function useSimulation(
       // The positions the previous scene finished with. This is what stops the
       // whole graph jumping when a note is saved.
       carriedRef.current,
+      // And the ones a person chose, which a save must not undo either.
+      pinsRef?.current,
     )
 
     layoutRef.current = layout
@@ -88,6 +123,8 @@ export function useSimulation(
       paintWhileRunning: !calm,
       onRunningChange: setRunning,
     })
+
+    loopRef.current = loop
 
     const onVisibilityChange = () => {
       if (document.hidden) loop.pause()
@@ -104,6 +141,7 @@ export function useSimulation(
 
     return () => {
       loop.stop()
+      loopRef.current = null
       document.removeEventListener('visibilitychange', onVisibilityChange)
 
       /*
@@ -127,7 +165,15 @@ export function useSimulation(
       // mechanism exists to avoid.
       carriedRef.current = layoutPositions(layout)
     }
-  }, [scene])
+  }, [pinsRef, scene])
 
-  return { layoutRef, running }
+  const nudge = useCallback((alpha = DRAG_HEAT) => {
+    const layout = layoutRef.current
+    if (layout === null) return
+
+    reheat(layout, alpha)
+    loopRef.current?.start()
+  }, [])
+
+  return { layoutRef, running, nudge }
 }

@@ -90,12 +90,17 @@
 
 /* --- Nodes ---------------------------------------------------------------- */
 
+/* `grab` rather than `pointer`: a node both opens and moves, and only one of
+   those is worth advertising -- clicking a thing is always available, dragging
+   it is not obvious unless the cursor says so. */
 .graph__canvas .graph__node {
-  cursor: pointer;
+  cursor: grab;
 }
 
+/* Still draggable with no note behind it. A node that cannot be opened can
+   still be in the way. */
 .graph__canvas .graph__node[aria-disabled] {
-  cursor: default;
+  cursor: grab;
 }
 
 /* Invisible, and the reason a 6px node is hittable with a thumb. */
@@ -156,8 +161,24 @@
   transition: opacity var(--motion-fast);
 }
 
+/* Held where somebody put it, rather than placed by the simulation.
+   On the ring rather than as an outline on the glyph, which was the obvious
+   first attempt and is invisible: a note's glyph is filled with the accent
+   colour already, so an accent stroke around it draws nothing. The ring sits
+   outside the shape, against the background, whatever the node is.
+   Before the two rules below on purpose -- all three are the same specificity,
+   so the last one that matches wins, and open and focused are the more urgent
+   things to know about a node that is also pinned. */
+.graph__node[data-pinned] .graph__ring {
+  stroke: var(--text-muted);
+  opacity: 0.45;
+}
+
 /* The note currently open in the editor, so the graph and the buffer agree. */
 .graph__node[data-open] .graph__ring {
+  /* Restated rather than inherited from the base rule: without it a pinned node
+     that is also open keeps the muted stroke above and stops reading as open. */
+  stroke: var(--accent);
   opacity: 1;
 }
 
@@ -168,6 +189,7 @@
 }
 
 .graph__node:focus .graph__ring {
+  stroke: var(--accent);
   opacity: 1;
   stroke-dasharray: 3 3;
 }
