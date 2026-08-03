@@ -31,6 +31,45 @@ REPO=${REPO:-CharbelDaher8/vim-notes}
 # from a different afternoon, with nothing saying so.
 NEWS_DIR=${NEWS_DIR:-/srv/vim-notes/news}
 
+
+# Which compose profiles apply, as a string for word splitting. Empty when there
+# is no news checkout, so a box without one builds exactly what it did before.
+news_profile() {
+	# An `if` rather than `[ ... ] && printf`, so the function cannot return
+	# non-zero merely for saying "no profiles". Under `set -e` that is the kind
+	# of thing that works until the day it is called somewhere it matters.
+	if [ -d "$NEWS_DIR/.git" ]; then
+		printf -- "--profile news"
+	fi
+}
+
+# Bring the stack in line with the compose file without rebuilding anything.
+# Used on the no-change path; the deploy path below does the same with --build.
+reconcile() {
+	cd "$APP_DIR/deploy" || return 0
+	# shellcheck disable=SC2086
+	docker compose $(news_profile) up -d
+}
+
+# The news checkout, if it is there. Deliberately not fatal and deliberately not
+# gated on its own CI: it is a separate repository with a separate history, and
+# a fetch that fails should hold back the news pane, not the notes.
+update_news() {
+	[ -d "$NEWS_DIR/.git" ] || { echo "no news checkout at ${NEWS_DIR}; skipping the news service"; return 0; }
+
+	(
+		cd "$NEWS_DIR"
+		before=$(git rev-parse --short HEAD)
+		git fetch -q origin "$BRANCH" && git merge -q --ff-only "origin/$BRANCH"
+		after=$(git rev-parse --short HEAD)
+		if [ "$before" = "$after" ]; then
+			echo "news up to date at ${before}"
+		else
+			echo "news moved: ${before} -> ${after}"
+		fi
+	) || echo "could not update the news checkout; building whatever is on disk"
+}
+
 cd "$APP_DIR"
 
 git fetch -q origin "$BRANCH"
@@ -39,6 +78,17 @@ remote_sha=$(git rev-parse "origin/$BRANCH")
 
 if [ "$local_sha" = "$remote_sha" ]; then
 	echo "up to date at ${local_sha:0:7}"
+	# Not `exit 0`, which is what this used to do and was wrong in a way that
+	# only showed up the day a second service appeared: `compose up -d` is how
+	# the stack is *reconciled*, not merely how new code is rolled out, and
+	# returning here meant a service that had never been started could never
+	# start. Cloning the news repository changed nothing until an unrelated
+	# commit landed on main and dragged it in.
+	#
+	# Cheap enough for a 15-minute timer: with nothing to do it is about a
+	# second, and no `--build`, so unchanged images are not rebuilt. It also
+	# means a service somebody stopped by hand comes back on the next tick.
+	reconcile
 	exit 0
 fi
 
@@ -102,40 +152,8 @@ esac
 echo "CI green, deploying ${remote_sha:0:7}"
 git merge -q --ff-only "origin/$BRANCH"
 
-# The news checkout, if it is there. Deliberately not fatal and deliberately
-# not gated on its own CI: it is a separate repository with a separate history,
-# and a fetch that fails should hold back the news pane, not the notes.
-#
-# `|| true` on the whole block rather than per command, because every way this
-# can fail has the same answer -- deploy the notes with whatever news code is
-# already on disk.
-profiles=""
-
-if [ -d "$NEWS_DIR/.git" ]; then
-	profiles="--profile news"
-	(
-		cd "$NEWS_DIR"
-		news_before=$(git rev-parse --short HEAD)
-		git fetch -q origin "$BRANCH" && git merge -q --ff-only "origin/$BRANCH"
-		news_after=$(git rev-parse --short HEAD)
-		if [ "$news_before" = "$news_after" ]; then
-			echo "news up to date at ${news_before}"
-		else
-			echo "news moved: ${news_before} -> ${news_after}"
-		fi
-	) || echo "could not update the news checkout; building whatever is on disk"
-else
-	echo "no news checkout at ${NEWS_DIR}; skipping the news service"
-fi
+update_news
 
 cd "$APP_DIR/deploy"
-# Unquoted on purpose: empty means "no profile", and "" as an argument is a
-# compose error. shellcheck would rather this were an array, which dash does
-# not have and this script is run by.
 # shellcheck disable=SC2086
-docker compose $profiles up -d --build
-
-# Images accumulate fast on a 64GB disk when every deploy builds two of them.
-docker image prune -f >/dev/null 2>&1 || true
-
-echo "deployed $(git -C "$APP_DIR" log --oneline -1)"
+docker compose $(news_profile) up -d --build

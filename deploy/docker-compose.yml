@@ -69,6 +69,16 @@ services:
       # /etc/profile and ~/.profile, like a shell opened over ssh would.
       TERMINAL_COMMAND: bash
       TERMINAL_ARGS: -l
+
+      # Where the news service answers, on the compose network. Empty is a
+      # supported value and means "no news pane", so this is not `:?`.
+      #
+      # It was documented in .env.example and read by config.ts before it was
+      # ever passed *here*, which is a complete, tested feature connected to
+      # nothing -- DECISIONS §6 again. The symptom was the pane reporting no
+      # news service while the same container could curl it by hand.
+      NEWS_API_URL: ${NEWS_API_URL:-}
+
       NODE_ENV: production
 
     volumes:
