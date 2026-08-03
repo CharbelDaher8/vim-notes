@@ -1,0 +1,12 @@
+[Unit]
+Description=Deploy vim-notes if main moved and CI is green
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=azureuser
+ExecStart=/srv/vim-notes/app/deploy/auto-deploy.sh
+# A rebuild on a 2-vCPU box is not instant, and a hung one must not wedge the
+# timer forever.
+TimeoutStartSec=1800

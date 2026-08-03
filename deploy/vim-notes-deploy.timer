@@ -1,0 +1,13 @@
+[Unit]
+Description=Check for a new vim-notes release every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+# Spread the load so every deploy does not land exactly on the quarter hour,
+# and so a rebuild is less likely to collide with the notes sync.
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
