@@ -16,11 +16,15 @@ const DEFAULT_PORT = 4321
 /**
  * Loopback, deliberately.
  *
- * This process spawns nvim in a pty and pipes it to a WebSocket, which is a
- * shell on someone's server. DECISIONS.md §11 is explicit that it is reachable
- * only over the tailnet and never exposed publicly, so the default must not be
- * 0.0.0.0 -- a default that binds every interface is one misconfigured firewall
- * away from being a public shell.
+ * This process spawns a login shell in a pty and pipes it to a WebSocket.
+ * DECISIONS.md §11 is explicit that it is reachable only over the tailnet and
+ * never exposed publicly, so the default must not be 0.0.0.0 -- a default that
+ * binds every interface is one misconfigured firewall away from handing a shell
+ * to the internet.
+ *
+ * It was nvim rather than a shell until DECISIONS §3 was revised, which changed
+ * nothing about this: nvim in a pty runs `:!sh` for the asking, so the exposure
+ * was always a shell. What changed is that it is now honest about it.
  *
  * Under Docker this default is deliberately overridden to 0.0.0.0, and that is
  * not a weakening. A container has its own network namespace, so binding its
@@ -120,8 +124,31 @@ const schema = z.object({
     .transform((value) => value === 'true'),
   WATCH_POLL_INTERVAL_MS: z.coerce.number().int().min(20).default(100),
 
-  /** What the terminal runs. The product is nvim; this exists for tests. */
-  TERMINAL_COMMAND: z.string().default('nvim'),
+  /**
+   * What the terminal runs.
+   *
+   * A login shell, not an editor. `/term` used to launch nvim directly, which
+   * made the one thing a terminal is for -- running a command -- impossible
+   * without going through `:!`. Now nvim is something you type, like everything
+   * else.
+   *
+   * A *login* shell (see TERMINAL_ARGS) so it behaves like one opened over ssh:
+   * /etc/profile and ~/.profile are read, which is where per-box customisation
+   * goes. Not for PATH -- the image's default PATH already carries
+   * /usr/local/bin, where nvim is, and the pty inherits it.
+   */
+  TERMINAL_COMMAND: z.string().default('bash'),
+  /**
+   * Arguments for it, split on whitespace.
+   *
+   * Whitespace rather than a real parser because every argument a shell needs
+   * here is a flag. Anything that would require quoting belongs in the profile,
+   * not in an environment variable read by a regex.
+   */
+  TERMINAL_ARGS: z
+    .string()
+    .default('-l')
+    .transform((value) => value.split(/\s+/).filter((argument) => argument !== '')),
   /** Abandoned ptys are reaped after this long with nothing attached. */
   TERMINAL_IDLE_TIMEOUT_MS: z.coerce
     .number()

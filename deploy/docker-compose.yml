@@ -65,7 +65,10 @@ services:
       WATCH_POLLING: ${WATCH_POLLING:-false}
       WATCH_POLL_INTERVAL_MS: ${WATCH_POLL_INTERVAL_MS:-100}
 
-      TERMINAL_COMMAND: nvim
+      # A login shell, not an editor -- DECISIONS §3. `-l` so it reads
+      # /etc/profile and ~/.profile, like a shell opened over ssh would.
+      TERMINAL_COMMAND: bash
+      TERMINAL_ARGS: -l
       NODE_ENV: production
 
     volumes:

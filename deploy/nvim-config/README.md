@@ -15,7 +15,6 @@ Two things to know before moving your real config in:
   `~/.config/nvim` will fail rather than half-succeed. Plugins that install into
   `~/.local/share/nvim` (lazy.nvim, packer, mason) are fine — that path is the
   `nvim-state` volume and is writable.
-- **The terminal is the product, not a shell.** Anything your config shells out
-  to has to exist in the image. The runtime image carries `git` and `ripgrep`;
-  a config that expects `fd`, `node`, or a language server will need those added
-  to the server stage of `deploy/Dockerfile`.
+- **Anything your config shells out to has to exist in the image.** `/term` is
+  a shell now (DECISIONS §3), so you can check by typing the command — if it is
+  not there, add it to the server stage of `deploy/Dockerfile`.

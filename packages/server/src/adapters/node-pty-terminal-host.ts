@@ -1,13 +1,15 @@
 /**
- * TerminalHost backed by node-pty -- real nvim in a real pty, which is the whole
- * point of the `/term` client (DECISIONS.md §3). Not an emulation: the user's
- * own init.lua, their plugins, their NERDTree.
+ * TerminalHost backed by node-pty -- a real login shell in a real pty, which is
+ * the whole point of the `/term` client (DECISIONS.md §3). Not an emulation:
+ * run a command, read its output, type `nvim` and get the user's own init.lua
+ * and their plugins.
  *
  * Three things drive the shape of this file.
  *
  *   1. Sessions outlive connections. The port says so, and it is the behaviour
  *      that matters most here: a phone that drops off wifi mid-edit has to come
- *      back to the same nvim, not to a fresh one with the unsaved buffer gone.
+ *      back to the same shell -- the same running command, the same nvim with
+ *      the same unsaved buffer -- not to a fresh one.
  *      So the registry is keyed by session id, a closed socket only detaches,
  *      and the only three things that end a pty are the process exiting, an
  *      explicit kill, and the idle reaper.
@@ -30,11 +32,17 @@
  *      is *settled* rather than reported: see `handleChildExit`.
  *
  * What this is *not* is a sandbox, and it would be dishonest to imply otherwise.
- * nvim in a pty can `:e /etc/passwd` and `:!sh` no matter what cwd it was given,
- * so forcing cwd buys predictability, not containment. The real boundary is
- * DECISIONS.md §11 -- the server binds to the tailnet and is never exposed --
- * plus running as an unprivileged user. Anything that can open this socket has a
- * shell, and the deployment is what has to be true, not this file.
+ * It is a shell now, so that is obvious -- but it was equally true when this
+ * spawned nvim, which runs `:!sh` for the asking. Forcing cwd buys
+ * predictability, not containment. The real boundary is DECISIONS.md §11 -- the
+ * server binds to the tailnet and is never exposed -- plus running as an
+ * unprivileged user. Anything that can open this socket has a shell, and the
+ * deployment is what has to be true, not this file.
+ *
+ * Concretely, in the deployed container that shell can read the notes deploy key
+ * at /run/secrets/notes-deploy-key, which is write access to the notes repo.
+ * That is the exposure to reason about, and it did not change when the command
+ * did.
  */
 import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
@@ -71,12 +79,18 @@ export class TerminalHostError extends Error {
   }
 }
 
-const DEFAULT_COMMAND = 'nvim'
+/**
+ * A shell, and a login one, so it behaves like a shell opened over ssh and
+ * reads the profile files. Overridden by TERMINAL_COMMAND; tests use `cat`.
+ */
+const DEFAULT_COMMAND = 'bash'
+const DEFAULT_ARGS = ['-l']
 
 /**
- * xterm.js advertises 256 colours and true colour, and nvim decides what to emit
- * from $TERM alone. Leaving the server's own $TERM to leak through would give a
- * monochrome editor under systemd (`TERM=dumb`) with no obvious cause.
+ * xterm.js advertises 256 colours and true colour, and a full-screen program
+ * decides what to emit from $TERM alone. Leaving the server's own $TERM to leak
+ * through would give a monochrome nvim under systemd (`TERM=dumb`) with no
+ * obvious cause.
  */
 const DEFAULT_TERM = 'xterm-256color'
 
@@ -116,9 +130,13 @@ const DEFAULT_SCROLLBACK_BYTES = 4 * 1024 * 1024
 
 /**
  * Long enough to survive a commute, a meeting, or a laptop lid; short enough
- * that a forgotten tab does not hold an nvim forever. Sessions are reaped with
- * SIGHUP, which nvim handles by running `:preserve` before exiting, so the swap
- * file survives and the work is recoverable with `:recover` even here.
+ * that a forgotten tab does not hold a shell forever.
+ *
+ * Sessions are reaped with SIGHUP, which is the right signal for a hangup and
+ * still does the right thing now that the child is a shell rather than nvim: a
+ * login shell exits, and an nvim running inside it is in the pty's foreground
+ * process group, so it receives the hangup too and runs `:preserve` on the way
+ * out. The swap file survives and the work is recoverable with `:recover`.
  */
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000
 const DEFAULT_REAP_INTERVAL_MS = 60_000
@@ -135,7 +153,7 @@ const DEFAULT_KILL_GRACE_MS = 2_000
  * defending against and what it cannot defend against.
  *
  * The quiet window is short because in the common case there is nothing to wait
- * for, and every millisecond here is added to the latency of `:q`. The cap is
+ * for, and every millisecond here is added to the latency of `exit`. The cap is
  * just past node-pty's own `DESTROY_SOCKET_TIMEOUT_MS` of 200ms, because that is
  * the point at which node-pty tears the pty master down itself and no further
  * byte can arrive no matter how long anyone waits.
@@ -146,8 +164,9 @@ const DEFAULT_EXIT_DRAIN_MAX_MS = 250
 export interface NodePtyTerminalHostOptions {
   /** Absolute path. Forced as every session's cwd; never taken from a client. */
   notesRoot: string
-  /** Defaults to `nvim`. Operator configuration, not a client-supplied value. */
+  /** Defaults to `bash`. Operator configuration, not a client-supplied value. */
   command?: string
+  /** Defaults to `['-l']`, which only makes sense alongside the default command. */
   args?: string[]
   /** Merged over the inherited environment. `TERM` is always ours. */
   env?: Record<string, string>
@@ -288,7 +307,10 @@ export class NodePtyTerminalHost implements TerminalHost {
 
     this.notesRoot = nodePath.resolve(options.notesRoot)
     this.command = options.command ?? DEFAULT_COMMAND
-    this.args = [...(options.args ?? [])]
+    // Defaulted together with the command rather than to `[]`: `-l` is a fact
+    // about bash, so a caller naming a different command must not silently
+    // inherit bash's flags.
+    this.args = [...(options.args ?? (options.command === undefined ? DEFAULT_ARGS : []))]
     this.env = { ...(options.env ?? {}) }
     this.term = options.term ?? DEFAULT_TERM
     this.scrollbackBytes = options.scrollbackBytes ?? DEFAULT_SCROLLBACK_BYTES

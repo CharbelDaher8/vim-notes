@@ -82,9 +82,10 @@ export function AppHeader() {
 /**
  * Only offered where there is a keyboard.
  *
- * `/term` is real nvim in a pty; DECISIONS.md §3 and §4 are explicit that it is
- * the desktop client and that a touch device gets CodeMirror instead. Offering
- * it on a phone would be offering modal editing with no Esc key.
+ * `/term` is a real login shell in a pty; DECISIONS.md §3 and §4 are explicit
+ * that it is the desktop client and that a touch device gets CodeMirror
+ * instead. Offering it on a phone would be offering a shell prompt, and then
+ * modal editing with no Esc key, to a thumb.
  *
  * A plain link, not a client-side transition: the two routes are closer to two
  * applications than two pages, and a full load means `/` is not still resident
@@ -95,7 +96,7 @@ function TerminalLink() {
   if (!hasKeyboard) return null
 
   return (
-    <a className="app__term-link" href="/term" title="Open nvim in a terminal">
+    <a className="app__term-link" href="/term" title="Open a shell on the notes server">
       /term
     </a>
   )

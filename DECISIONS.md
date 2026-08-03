@@ -81,13 +81,27 @@ stash, never `reset --hard`, never leave a rebase half-done under a live editor
 
 ## 3. Two clients over one directory
 
-- `/term` — xterm.js over a WebSocket to real nvim in a pty. Your actual
-  `init.lua`, your plugins, NERDTree. Serves the work PC.
+- `/term` — xterm.js over a WebSocket to a real login shell in a pty. Run
+  commands, check `git log`, and type `nvim` when you want the editor, with your
+  actual `init.lua` and your plugins. Serves the work PC.
 - `/` — a PWA with CodeMirror 6 and a file tree. Serves the phone.
 
 **Why:** the two use cases have genuinely different input devices, and one UI
 cannot serve both well. Fidelity matters where there is a real keyboard;
 ergonomics matter where there is not.
+
+**Why a shell and not nvim directly.** It launched nvim as PID 1 of the pty
+until 2026-08-03, which made the one thing a terminal is for — running a command
+— reachable only through `:!`, and left no way to do anything between quitting
+the editor and reloading the page. An editor is a program you run in a terminal,
+not a thing a terminal is.
+
+This gave up nothing in security, which is the objection to expect. nvim in a
+pty runs `:!sh` for the asking, so `/term` was always a shell — the change makes
+it honest rather than more dangerous. What is worth stating plainly, and is
+unchanged either way: in the deployed container that shell can read the notes
+deploy key at `/run/secrets/notes-deploy-key`, so anything that can open this
+socket can push to the notes repo. §11 is the boundary that has to hold.
 
 **Consequence:** the moment the terminal exists there are two writers to the same
 file, which is why §5 and the `FileWatcher` port are not optional.

@@ -74,6 +74,9 @@ export async function createApplication(config: Config): Promise<Application> {
   const terminals = new NodePtyTerminalHost({
     notesRoot: config.NOTES_ROOT,
     command: config.TERMINAL_COMMAND,
+    // The host has always accepted these; nothing passed them until the command
+    // became a shell, where `-l` is what makes it a login shell.
+    args: config.TERMINAL_ARGS,
     idleTimeoutMs: config.TERMINAL_IDLE_TIMEOUT_MS,
     onError: onError('terminal'),
   })

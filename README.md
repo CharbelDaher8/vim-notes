@@ -1,19 +1,19 @@
 # vim-notes
 
 Self-hosted notes that are just markdown files in a git repo, reachable from
-anywhere. Real nvim in the browser when you have a keyboard; a plain markdown
-editor when you are on a phone.
+anywhere. A real shell — and your own nvim — in the browser when you have a
+keyboard; a plain markdown editor when you are on a phone.
 
 The repo is the product — this is an access layer over it. Notes stay useful
 even if the whole stack goes away: `git clone` and they are all there.
 
 ## What it is
 
-| Client      | Where it runs    | What it is                                                                                  |
-| ----------- | ---------------- | ------------------------------------------------------------------------------------------- |
-| `/term`     | work PC, desktop | xterm.js over a WebSocket into real nvim in a pty — your `init.lua`, your plugins, NERDTree |
-| `/`         | phone, anywhere  | PWA with CodeMirror 6, file tree, search. Vim keys on with a keyboard, off on touch         |
-| desktop app | macOS / Windows  | thin Tauri shell around the same web client, mainly for keyboard capture                    |
+| Client      | Where it runs    | What it is                                                                                                                         |
+| ----------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `/term`     | work PC, desktop | xterm.js over a WebSocket into a real login shell in a pty — run commands, or type `nvim` and get your `init.lua` and your plugins |
+| `/`         | phone, anywhere  | PWA with CodeMirror 6, file tree, search. Vim keys on with a keyboard, off on touch                                                |
+| desktop app | macOS / Windows  | thin Tauri shell around the same web client, mainly for keyboard capture                                                           |
 
 Both clients read and write the same `~/notes/*.md` directory. Saves
 auto-commit and push to a private GitHub repo, so a laptop clone is a first-class way to
@@ -27,7 +27,7 @@ on disk — edit it in either, or with any other program, and the other notices.
 |                                                     |                                                         |
 | --------------------------------------------------- | ------------------------------------------------------- |
 | ![The editor](docs/screenshots/editor.jpg)          | ![The same note in nvim](docs/screenshots/terminal.jpg) |
-| CodeMirror, with wikilinks and backlinks resolved   | `/term` — actual nvim, your config, your plugins        |
+| CodeMirror, with wikilinks and backlinks resolved   | `/term` — a shell, with actual nvim a command away      |
 | ![Tasks](docs/screenshots/tasks.jpg)                | ![The graph](docs/screenshots/graph.jpg)                |
 | `TODO` and `Reminder` lines, grouped by day and due | Notes, days, todos and reminders, and what links them   |
 
@@ -92,9 +92,12 @@ starts committing this repository's source tree into its own history. Both fail
 silently: saves work, commits report "nothing to commit", and history quietly
 stops. Preflight checks it at boot and prints the exact command to fix it.
 
-The server also needs `git`, `ripgrep` and `nvim` on `PATH`. A missing `git` is
-fatal for the same reason; the other two only disable search and the terminal,
-and are reported at startup rather than at the moment you reach for them.
+The server also needs `git`, `ripgrep`, `bash` and `nvim` on `PATH`. A missing
+`git` is fatal for the same reason; the others only disable search, the terminal
+and editing in it, and are reported at startup rather than at the moment you
+reach for them. `nvim` is checked even though nothing launches it any more —
+`/term` is a shell, so it is a command you type, and a box that forgot to
+install it would otherwise look perfectly healthy until you tried to edit.
 
 ## Why it is built this way
 

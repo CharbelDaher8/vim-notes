@@ -2,7 +2,7 @@
  * Startup checks for the things this server shells out to.
  *
  * The server is not self-contained: it runs `git` for every commit and sync,
- * `rg` for search, and nvim in a pty for the terminal. Those live on the host,
+ * `rg` for search, and a shell in a pty for the terminal. Those live on the host,
  * not in the dependency tree, so nothing in the build can tell you they are
  * missing -- and each one fails at a different moment, long after boot, in a
  * way that looks like the feature is broken rather than absent.
@@ -151,6 +151,20 @@ export interface PreflightReport {
  * and the workflow did not.
  */
 export function requiredBinaries(config: Config): RequiredBinary[] {
+  // Deduplicated by command, keeping the first entry, because two of these are
+  // configurable and can name the same program: `TERMINAL_COMMAND=nvim` is a
+  // supported way to run the old editor-only terminal, and without this it
+  // would be probed twice and reported twice.
+  const seen = new Set<string>()
+
+  return candidateBinaries(config).filter((binary) => {
+    if (seen.has(binary.command)) return false
+    seen.add(binary.command)
+    return true
+  })
+}
+
+function candidateBinaries(config: Config): RequiredBinary[] {
   return [
     {
       // Not optional at any level. Notes *are* a git repository (DECISIONS §1);
@@ -169,12 +183,22 @@ export function requiredBinaries(config: Config): RequiredBinary[] {
       severity: 'optional',
     },
     {
-      // The configured command, not a hardcoded `nvim`: TERMINAL_COMMAND is
-      // overridable, and checking for nvim when the server is set to run
+      // The configured command, not a hardcoded `bash`: TERMINAL_COMMAND is
+      // overridable, and checking for the default when the server is set to run
       // something else would report a problem that does not exist and miss one
       // that does.
       command: config.TERMINAL_COMMAND,
-      provides: 'the /term editor',
+      provides: 'the /term shell',
+      severity: 'optional',
+    },
+    {
+      // Listed separately from the terminal command since /term became a shell
+      // (DECISIONS §3). Nothing spawns nvim any more -- you type it -- so
+      // without an entry here a deployment that forgot to install it looks
+      // perfectly healthy right up until someone tries to edit a note, which is
+      // exactly the class of failure this file exists to move to boot time.
+      command: 'nvim',
+      provides: 'editing in /term',
       severity: 'optional',
     },
   ]

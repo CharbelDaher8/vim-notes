@@ -289,15 +289,38 @@ describe('the remote', () => {
 })
 
 describe('requiredBinaries', () => {
-  it('checks the configured terminal command, not a hardcoded nvim', () => {
+  it('checks the configured terminal command, not a hardcoded bash', () => {
     // TERMINAL_COMMAND is overridable, so hardcoding would both invent a
     // problem that does not exist and miss the one that does.
-    const commands = requiredBinaries(makeConfig({ TERMINAL_COMMAND: 'helix' })).map(
+    const commands = requiredBinaries(makeConfig({ TERMINAL_COMMAND: 'fish' })).map(
       (entry) => entry.command,
     )
 
-    expect(commands).toContain('helix')
-    expect(commands).not.toContain('nvim')
+    expect(commands).toContain('fish')
+    expect(commands).not.toContain('bash')
+  })
+
+  /**
+   * Since /term became a shell, nothing spawns nvim -- you type it -- so it is
+   * checked on its own account. Without this a deployment that forgot to
+   * install it boots perfectly happily and fails when someone tries to edit.
+   */
+  it('checks nvim even though nothing launches it', () => {
+    const commands = requiredBinaries(makeConfig({ TERMINAL_COMMAND: 'bash' })).map(
+      (entry) => entry.command,
+    )
+
+    expect(commands).toContain('nvim')
+  })
+
+  it('asks about a command named twice only once', () => {
+    // `TERMINAL_COMMAND=nvim` is still a supported configuration -- it is what
+    // the terminal used to be -- and it collides with the entry above.
+    const commands = requiredBinaries(makeConfig({ TERMINAL_COMMAND: 'nvim' })).map(
+      (entry) => entry.command,
+    )
+
+    expect(commands.filter((command) => command === 'nvim')).toEqual(['nvim'])
   })
 
   it('treats git as required and the rest as optional', () => {
