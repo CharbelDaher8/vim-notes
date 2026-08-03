@@ -32,51 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          # setup-node v5 turns package-manager caching on by default. It reads
-          # `packageManager` from package.json, sees pnpm, and then shells out
-          # to `pnpm store path` -- which fails, because corepack has not run
-          # yet and pnpm does not exist. Ordering cannot fix it either: corepack
-          # enable has to come after the node this job will actually use. So the
-          # built-in cache is off and the store is cached explicitly below.
-          package-manager-cache: false
-
-      # pnpm comes from the `packageManager` field, so the version here always
-      # matches the one the lockfile was written by.
-      - name: Enable corepack
-        run: corepack enable
-
-      - name: Locate the pnpm store
-        id: store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
-        with:
-          path: ${{ steps.store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
-
-      # Retried, and reported as its own failure when it gives up.
-      #
-      # The registry has been genuinely unreliable from this project's network:
-      # installs take minutes and occasionally fail outright fetching a platform
-      # binary. A transient fetch failure is not a broken commit, and a red X
-      # that says "CI failed" on a working change trains everyone to ignore CI.
-      # Timeouts and retry counts live in pnpm-workspace.yaml so they apply
-      # locally too; this loop covers the case where even those give up.
-      - name: Install dependencies
-        run: |
-          for attempt in 1 2 3; do
-            if pnpm install --frozen-lockfile; then
-              exit 0
-            fi
-            echo "::warning title=Install failed::attempt ${attempt} of 3 could not fetch dependencies"
-            sleep $((attempt * 20))
-          done
-          echo "::error title=Dependency install failed::three attempts failed to fetch dependencies. This is an install failure, not a test failure -- the commit has not been verified either way."
-          exit 1
+      - uses: ./.github/actions/pnpm-install
 
       # ripgrep is a runtime dependency, not a convenience: the Search port
       # shells out to it, and the runtime image installs it for the same reason.
@@ -131,15 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-
-      - name: Enable corepack
-        run: corepack enable
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/pnpm-install
 
       # The env var is what un-skips them; see pty-delivery-gate.ts.
       - name: Pty delivery
