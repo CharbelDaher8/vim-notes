@@ -1,6 +1,7 @@
 import { notePathBasename, notePathParent } from '@vim-notes/core'
 
 import { useVimMode } from '../features/editor/use-vim-mode'
+import { useNewsStatus } from '../features/news/use-news'
 import { useThemeStore } from '../shared/theme'
 import { useMediaQuery } from '../shared/use-media-query'
 import { GraphIcon, Keyboard, Menu, Moon, Sun } from '../shared/ui/icons'
@@ -44,6 +45,7 @@ export function AppHeader() {
 
       <GraphToggle />
       <GraphLink />
+      <NewsLink />
       <TerminalLink />
 
       <DevTools />
@@ -126,6 +128,21 @@ function GraphToggle() {
     >
       <GraphIcon />
     </button>
+  )
+}
+
+/**
+ * Only shown when there is a feed to show, so a deployment without the
+ * aggregator has no link to a page explaining that it has no aggregator.
+ */
+function NewsLink() {
+  const { data: status } = useNewsStatus()
+  if (status?.available !== true) return null
+
+  return (
+    <a className="app__term-link" href="/news" title="Today's feed">
+      /news
+    </a>
   )
 }
 

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 
-export type Route = 'notes' | 'terminal' | 'graph'
+export type Route = 'notes' | 'terminal' | 'graph' | 'news'
 
 /**
- * Three routes, still no router.
+ * Four routes, still no router.
  *
  * A routing library would be a dependency and a chunk to serve what are really
  * three applications sharing a server, and the phone pays for every kilobyte
@@ -17,6 +17,7 @@ export type Route = 'notes' | 'terminal' | 'graph'
 const ROUTES: ReadonlyArray<{ prefix: string; route: Route }> = [
   { prefix: '/term', route: 'terminal' },
   { prefix: '/graph', route: 'graph' },
+  { prefix: '/news', route: 'news' },
 ]
 
 export function routeFor(pathname: string): Route {

@@ -1,0 +1,215 @@
+.news {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface);
+}
+
+.news__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex: none;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.news__categories {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.news__filter {
+  min-height: 1.9rem;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.news__filter:hover {
+  background: var(--surface-hover);
+}
+
+.news__filter[aria-pressed='true'] {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.news__list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* Held to a reading measure rather than filling the window.
+   At 1200px a headline runs the width of the screen, the summary under it is
+   one long line, and the trailing action ends up so far from the item it
+   belongs to that it reads as unrelated. This is prose; it gets prose's
+   measure, the same one the editor uses. */
+.news__item {
+  max-width: var(--editor-measure);
+  margin: 0 auto;
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.news__filters,
+.news__footer {
+  /* Aligned with the column rather than the window, or the filters float away
+     from the list they filter. */
+  width: 100%;
+  max-width: var(--editor-measure);
+  margin: 0 auto;
+}
+
+/* Read items stay in place rather than disappearing -- the ranking is the
+   aggregator's and a client-side filter would silently change it -- but they
+   recede, so a scan down the column lands on what is new. */
+.news__item[data-read] {
+  opacity: 0.55;
+}
+
+.news__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.news__score {
+  flex: none;
+  min-width: 2ch;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The day's picks, which the aggregator chose deliberately and separately from
+   the score. */
+.news__score[data-top] {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.news__score[data-unscored] {
+  opacity: 0.5;
+}
+
+.news__title {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.news__title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.news__meta,
+.news__summary {
+  margin: 0.25rem 0 0 calc(2ch + 0.5rem);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.news__reason {
+  color: var(--accent);
+}
+
+.news__summary {
+  color: var(--text-muted);
+}
+
+.news__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0.4rem 0 0 calc(2ch + 0.5rem);
+}
+
+.news__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 1.7rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.news__action:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.news__action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.news__action[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.news__action--quiet {
+  border-color: transparent;
+  margin-left: auto;
+}
+
+.news__saved-to {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.news__footer {
+  flex: none;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.news__notice {
+  display: grid;
+  place-content: center;
+  gap: 0.3rem;
+  height: 100%;
+  margin: 0;
+  padding: 1.5rem;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.news__notice-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}

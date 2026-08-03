@@ -10,7 +10,9 @@
  * the conflict and reconcile paths would only ever be exercised by accident.
  */
 import {
+  assertNotePath,
   decideWriteOrForce,
+  journalPathFor,
   notePathBasename,
   notePathContains,
   notePathParent,
@@ -23,6 +25,7 @@ import {
   type FileChangeEvent,
   type FileChangeKind,
   type ForceWrite,
+  type NewsItem,
   type NoteDocument,
   type NoteGraph,
   type NoteMetadata,
@@ -43,7 +46,8 @@ import {
   isIndexable,
   type IndexedNote,
 } from './derive-index'
-import type { Platform } from './platform'
+import { SEED_NEWS, SEED_NEWS_LAST_RUN } from './in-memory-seed'
+import type { NewsClient, Platform } from './platform'
 import { documentHost } from './document-host'
 
 interface FileRecord {
@@ -239,6 +243,99 @@ export class InMemoryPlatform implements Platform {
   async graph(): Promise<NoteGraph> {
     await this.#settle()
     return deriveGraph(this.#notes())
+  }
+
+  /**
+   * A feed with no aggregator behind it.
+   *
+   * Seeded rather than empty, and available rather than not, because this is
+   * the platform the UI is developed against: a pane that only ever renders
+   * "no news service configured" is a pane nobody can lay out. Read and saved
+   * state live in memory and reset with the page, which is the same bargain
+   * every other dev affordance here makes.
+   */
+  /** Mutable, because read and saved state are the point of a dev feed. */
+  readonly #news: NewsItem[] = SEED_NEWS.map((item) => ({ ...item }))
+
+  readonly news: NewsClient = {
+    status: async () => {
+      await this.#settle()
+      return {
+        available: true,
+        lastRun: SEED_NEWS_LAST_RUN,
+        items: this.#news.length,
+        enriched: this.#news.filter((item) => item.score !== null).length,
+      }
+    },
+
+    list: async (query = {}) => {
+      await this.#settle()
+      return this.#news
+        .filter((item) => query.category === undefined || item.category === query.category)
+        .filter((item) => query.unreadOnly !== true || !item.read)
+        .filter((item) => query.savedOnly !== true || item.saved)
+        .slice(0, query.limit ?? 100)
+    },
+
+    setRead: async (id, read) => {
+      await this.#settle()
+      const item = this.#news.find((candidate) => candidate.id === id)
+      if (item !== undefined) item.read = read
+    },
+
+    toggleSaved: async (id) => {
+      await this.#settle()
+      const item = this.#news.find((candidate) => candidate.id === id)
+      if (item === undefined) return false
+      item.saved = !item.saved
+      return item.saved
+    },
+
+    /**
+     * Writes a real note through the same store the editor uses, so the saved
+     * item shows up in the tree, the search and the graph exactly as it would
+     * against a server. Formatting deliberately matches the server's
+     * `renderItem`; this is the one place in this file that duplicates
+     * something, and it is duplicated so that what you see in dev is what you
+     * get in production.
+     */
+    save: async (id, date, path) => {
+      await this.#settle()
+      const item = this.#news.find((candidate) => candidate.id === id)
+      if (item === undefined) throw new Error('that item is no longer in the feed')
+
+      const target =
+        path ??
+        assertNotePath(
+          journalPathFor(
+            date,
+            this.#notes().map((note) => note.path),
+          ),
+        )
+      const existing = await this.read(target)
+
+      const facts = [
+        item.score === null ? null : `score ${item.score}`,
+        item.signalLabel === '' ? null : item.signalLabel,
+        item.category,
+      ].filter((fact): fact is string => fact !== null)
+
+      const block = [
+        `- [${item.title}](${item.url}) \u2014 ${item.source}`,
+        `  ${facts.join(' \u00b7 ')}`,
+        ...(item.summary === null ? [] : [`  > ${item.summary.replace(/\n+/g, ' ')}`]),
+      ].join('\n')
+
+      const content =
+        existing === null
+          ? `# ${date}\n\n${block}\n`
+          : `${existing.content.replace(/\s*$/, '')}\n\n${block}\n`
+
+      await this.write(target, content, existing === null ? null : existing.hash)
+      item.read = true
+
+      return { path: target, created: existing === null }
+    },
   }
 
   // --- Dev affordances -------------------------------------------------------

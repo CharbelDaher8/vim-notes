@@ -39,7 +39,7 @@ import type {
 
 import { documentHost } from './document-host'
 import { isSafeExternalUrl } from './external-url'
-import type { HostCommand, Platform, PlatformHost } from './platform'
+import type { HostCommand, NewsClient, Platform, PlatformHost } from './platform'
 
 export class TauriPlatform implements Platform {
   readonly id = 'tauri' as const
@@ -98,6 +98,13 @@ export class TauriPlatform implements Platform {
 
   graph(): Promise<NoteGraph> {
     return this.#notes.graph()
+  }
+
+  // Delegated whole rather than method by method: this class exists to replace
+  // the *host* -- window title, external links, menu commands -- and has no
+  // opinion about anything a note or a feed does.
+  get news(): NewsClient {
+    return this.#notes.news
   }
 }
 

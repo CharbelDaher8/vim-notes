@@ -136,3 +136,96 @@ See also [the git book](https://git-scm.com/book) when rebasing goes wrong.
 readable.
 `,
 }
+
+/**
+ * A few days of feed, for developing the news pane against.
+ *
+ * Chosen to cover the states the pane has to render rather than to be
+ * representative: one top pick with a reason, one unscored item from a fetch
+ * that ran before the LLM pass, one already read, one saved, and one with no
+ * summary. A seed where everything is a well-formed 90 is a seed that hides
+ * every layout problem worth finding.
+ */
+export const SEED_NEWS_LAST_RUN = 1_785_700_000
+
+export const SEED_NEWS = [
+  {
+    id: 'seed-kev',
+    url: 'https://www.cisa.gov/known-exploited-vulnerabilities-catalog',
+    title: 'CISA adds three actively exploited flaws to the KEV catalogue',
+    source: 'CISA KEV',
+    sourceKey: 'kev',
+    category: 'security',
+    author: null,
+    published: 1_785_690_000,
+    firstSeen: 1_785_695_000,
+    signal: 0,
+    signalLabel: '',
+    summary:
+      'Two are in edge devices already reachable from the internet, and one has a public proof of concept.',
+    score: 94,
+    isTop: true,
+    topReason: 'actively exploited, and one is in something you run',
+    read: false,
+    saved: false,
+  },
+  {
+    id: 'seed-repo',
+    url: 'https://github.com/example/inference-engine',
+    title: 'inference-engine: run quantised models on a laptop GPU',
+    source: 'GitHub Trending',
+    sourceKey: 'gh-trending',
+    category: 'ai',
+    author: 'example',
+    published: 1_785_640_000,
+    firstSeen: 1_785_660_000,
+    signal: 2_400,
+    signalLabel: '2.4k stars',
+    summary: 'Claims a 3x speedup over llama.cpp on Apple silicon, with numbers.',
+    score: 81,
+    isTop: false,
+    topReason: null,
+    read: false,
+    saved: true,
+  },
+  {
+    id: 'seed-hn',
+    url: 'https://news.ycombinator.com/item?id=1',
+    title: 'A new approach to incremental parsing',
+    source: 'Hacker News',
+    sourceKey: 'hn',
+    category: 'tech',
+    author: null,
+    published: 1_785_600_000,
+    firstSeen: 1_785_610_000,
+    signal: 842,
+    signalLabel: '842 pts',
+    summary: null,
+    // Fetched, not yet scored: what the pane shows between a refresh and the
+    // LLM pass, and the state most likely to be rendered as a zero by mistake.
+    score: null,
+    isTop: false,
+    topReason: null,
+    read: false,
+    saved: false,
+  },
+  {
+    id: 'seed-read',
+    url: 'https://lobste.rs/s/1',
+    title: 'Why your database is slower than it looks',
+    source: 'Lobsters',
+    sourceKey: 'lobsters',
+    category: 'tech',
+    author: 'someone',
+    published: 1_785_500_000,
+    firstSeen: 1_785_520_000,
+    signal: 61,
+    signalLabel: '61 pts',
+    summary: 'Mostly about page cache behaviour under mixed read and write load.',
+    score: 55,
+    isTop: false,
+    topReason: null,
+    read: true,
+    saved: false,
+  },
+]

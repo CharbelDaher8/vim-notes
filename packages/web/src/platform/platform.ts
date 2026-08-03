@@ -17,6 +17,9 @@ import type {
   ExpectedVersion,
   FileChangeEvent,
   ForceWrite,
+  NewsItem,
+  NewsQuery,
+  NewsStatus,
   NoteGraph,
   ResolvedLink,
   NoteDocument,
@@ -125,4 +128,28 @@ export interface Platform {
   backlinks(path: NotePath): Promise<ResolvedLink[]>
 
   graph(): Promise<NoteGraph>
+
+  // --- Somebody else's data -------------------------------------------------
+  //
+  // The news aggregator, which is a separate application that may not be
+  // deployed at all. Unlike everything above, this is not derived from the
+  // notes and is not owned by this app -- so it gets a `status()` rather than
+  // an assumption, and every implementation must answer it without throwing.
+
+  news: NewsClient
+}
+
+export interface NewsClient {
+  status(): Promise<NewsStatus>
+  list(query?: NewsQuery): Promise<NewsItem[]>
+  setRead(id: string, read: boolean): Promise<void>
+  /** Returns the new state, because it toggles rather than sets. */
+  toggleSaved(id: string): Promise<boolean>
+  /**
+   * Copy an item into a note, one way.
+   *
+   * `date` is the client's day rather than the server's: the server is a box in
+   * whichever region was cheapest, and the day a person is having is not UTC.
+   */
+  save(id: string, date: string, path?: NotePath): Promise<{ path: NotePath; created: boolean }>
 }

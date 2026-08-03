@@ -4,6 +4,7 @@ import { currentServerOrigin, usePlatform } from '../platform'
 import { useThemeSync } from '../shared/theme'
 import { useWorkspaceStore } from '../shared/workspace-store'
 import { GraphRoute } from './graph-route'
+import { NewsRoute } from './news-route'
 import { NotesWorkspace } from './notes-workspace'
 import { ServerSettings } from './server-settings'
 import { TerminalRoute } from './terminal-route'
@@ -39,6 +40,8 @@ export function App() {
       return <TerminalRoute />
     case 'graph':
       return <GraphRoute />
+    case 'news':
+      return <NewsRoute />
     default:
       return <NotesWorkspace />
   }

@@ -35,7 +35,7 @@ import {
   type WriteOutcome,
 } from '@vim-notes/core'
 
-import type { Platform } from './platform'
+import type { NewsClient, Platform } from './platform'
 import type { NotesClient } from './trpc-client'
 import { documentHost } from './document-host'
 
@@ -123,6 +123,17 @@ export class WebPlatform implements Platform {
 
   graph(): Promise<NoteGraph> {
     return this.#client.index.graph.query()
+  }
+
+  readonly news: NewsClient = {
+    status: () => this.#client.news.status.query(),
+    list: (query) => this.#client.news.list.query(query),
+    setRead: async (id, read) => {
+      await this.#client.news.setRead.mutate({ id, read })
+    },
+    toggleSaved: async (id) => (await this.#client.news.toggleSaved.mutate({ id })).saved,
+    save: (id, date, path) =>
+      this.#client.news.save.mutate({ id, date, ...(path === undefined ? {} : { path }) }),
   }
 
   /**
