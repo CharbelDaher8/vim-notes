@@ -69,6 +69,35 @@
   min-height: 0;
 }
 
+/* --- Graph panel ---------------------------------------------------------- */
+
+/*
+ * A column, not an overlay: it sits beside the editor and takes width from it,
+ * because the point of having it there is glancing between the two. Only
+ * rendered above 64rem -- see `useHasRoomForGraph`, which is where that number
+ * is decided; this file must not grow a second opinion about it.
+ *
+ * Sized in `vw` between two fixed bounds rather than as a flex fraction, so the
+ * editor keeps a usable measure on a laptop and the graph does not become a
+ * third of the screen on a big monitor.
+ */
+.app__graph {
+  flex: none;
+  width: clamp(16rem, 24vw, 26rem);
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.app__graph-loading {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
 /* --- Sidebar -------------------------------------------------------------- */
 
 .sidebar {

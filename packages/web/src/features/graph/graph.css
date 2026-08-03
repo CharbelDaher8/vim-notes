@@ -350,6 +350,30 @@
   font-style: italic;
 }
 
+/* --- In the panel beside the editor --------------------------------------- */
+
+/*
+ * The same graph in a column a fifth the width, so the parts that are chrome
+ * rather than picture get out of the way. The legend is the notable one: it
+ * explains a shape vocabulary you are not studying here, it wraps to four lines
+ * at this width, and `/graph` is one click away with the full key on it.
+ */
+.graph--panel .graph__legend {
+  display: none;
+}
+
+.graph--panel .graph__footer {
+  justify-content: flex-end;
+  padding: 0.3rem 0.6rem;
+}
+
+/* Tucked in tighter: at this width the buttons are a visible fraction of the
+   picture rather than something in the corner of it. */
+.graph--panel .graph__controls {
+  right: 0.35rem;
+  bottom: 0.35rem;
+}
+
 /*
  * Forced colours replace the palette outright, which is exactly the case the
  * shape vocabulary exists for: everything below collapses to two colours and

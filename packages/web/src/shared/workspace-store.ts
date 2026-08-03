@@ -1,6 +1,8 @@
 import type { NotePath } from '@vim-notes/core'
 import { create } from 'zustand'
 
+import { readSetting, SETTING_KEYS, writeSetting } from './local-storage'
+
 export interface RevealTarget {
   /** 1-indexed, matching SearchHit. */
   line: number
@@ -37,6 +39,15 @@ interface WorkspaceState {
    * shortcut that opens it is bound at the window, a long way from the dialog.
    */
   paletteOpen: boolean
+  /**
+   * The graph alongside the editor.
+   *
+   * Remembered across reloads, unlike the drawer: the drawer is a thing you
+   * open to do something and close again, and this is a way of working. It is
+   * also the flag that decides whether the graph chunk is fetched at all, so
+   * "off" has to survive a refresh or the phone pays for it anyway.
+   */
+  graphPanelOpen: boolean
 
   openNote: (path: NotePath, reveal?: RevealTarget) => Promise<void>
   closeNote: () => Promise<void>
@@ -46,6 +57,7 @@ interface WorkspaceState {
   setDrawerOpen: (open: boolean) => void
   setSidebarPanel: (panel: SidebarPanel) => void
   setPaletteOpen: (open: boolean) => void
+  setGraphPanelOpen: (open: boolean) => void
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
@@ -54,6 +66,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   drawerOpen: false,
   sidebarPanel: 'files',
   paletteOpen: false,
+  // Off unless it was deliberately turned on. See the note on the field.
+  graphPanelOpen: readSetting(SETTING_KEYS.graphPanel) === 'open',
 
   openNote: async (path, reveal) => {
     if (get().openPath !== path && navigationGuard !== null) {
@@ -80,4 +94,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setSidebarPanel: (sidebarPanel) => set({ sidebarPanel, drawerOpen: true }),
 
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+
+  setGraphPanelOpen: (graphPanelOpen) => {
+    writeSetting(SETTING_KEYS.graphPanel, graphPanelOpen ? 'open' : null)
+    set({ graphPanelOpen })
+  },
 }))

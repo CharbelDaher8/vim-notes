@@ -1,24 +1,11 @@
-import { lazy, Suspense } from 'react'
+import { Suspense } from 'react'
 
-// Type-only, and it has to stay that way: see the note on the lazy import
-// below. `import type` is erased before the bundler sees it, so this costs
-// nothing; dropping the keyword would pull the whole graph into the main chunk.
+// Type-only, and it has to stay that way: `import type` is erased before the
+// bundler sees it, so this costs nothing, while dropping the keyword would pull
+// the whole graph into the main chunk. See graph-chunk.ts.
 import type { OpenTarget } from '../features/graph/graph-scene'
+import { LazyGraphView } from './graph-chunk'
 import { noteHref } from './note-url'
-
-/**
- * Lazy for the same reason the terminal is: the graph carries a force
- * simulation and an SVG scene that nobody needs until they ask for the graph,
- * and the phone is the client that pays for anything left in the initial chunk
- * (DECISIONS.md §13).
- *
- * This must stay the only reference to the module. An eager import anywhere --
- * a barrel re-export, an `import type` written without `type` -- silently folds
- * it back into the main bundle, and nothing fails to make that visible.
- */
-const GraphView = lazy(() =>
-  import('../features/graph/graph-view').then((module) => ({ default: module.GraphView })),
-)
 
 export function GraphRoute() {
   return (
@@ -30,7 +17,7 @@ export function GraphRoute() {
     // the same way it does everywhere else; see use-visual-viewport.ts.
     <div className="route-fill">
       <Suspense fallback={<p className="route-loading">Loading graph…</p>}>
-        <GraphView onOpen={openInWorkspace} />
+        <LazyGraphView onOpen={openInWorkspace} />
       </Suspense>
     </div>
   )

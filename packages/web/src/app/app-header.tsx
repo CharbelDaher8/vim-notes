@@ -3,9 +3,10 @@ import { notePathBasename, notePathParent } from '@vim-notes/core'
 import { useVimMode } from '../features/editor/use-vim-mode'
 import { useThemeStore } from '../shared/theme'
 import { useMediaQuery } from '../shared/use-media-query'
-import { Keyboard, Menu, Moon, Sun } from '../shared/ui/icons'
+import { GraphIcon, Keyboard, Menu, Moon, Sun } from '../shared/ui/icons'
 import { useWorkspaceStore } from '../shared/workspace-store'
 import { DevTools } from './dev-tools'
+import { useHasRoomForGraph } from './graph-panel'
 import { ServerSettings } from './server-settings'
 
 export function AppHeader() {
@@ -41,6 +42,7 @@ export function AppHeader() {
         )}
       </h1>
 
+      <GraphToggle />
       <GraphLink />
       <TerminalLink />
 
@@ -96,6 +98,33 @@ function TerminalLink() {
     <a className="app__term-link" href="/term" title="Open nvim in a terminal">
       /term
     </a>
+  )
+}
+
+/**
+ * Shows the same graph beside the editor rather than instead of it.
+ *
+ * Only where there is room for both -- see `useHasRoomForGraph`. Offering a
+ * toggle that renders nothing would be worse than not offering it, and the
+ * narrow case already has `/graph` next to this button.
+ */
+function GraphToggle() {
+  const open = useWorkspaceStore((state) => state.graphPanelOpen)
+  const room = useHasRoomForGraph()
+
+  if (!room) return null
+
+  return (
+    <button
+      type="button"
+      className="icon-button"
+      aria-pressed={open}
+      title={open ? 'Hide the graph (Ctrl/Cmd+G)' : 'Show the graph beside the note (Ctrl/Cmd+G)'}
+      aria-label="Graph panel"
+      onClick={() => useWorkspaceStore.getState().setGraphPanelOpen(!open)}
+    >
+      <GraphIcon />
+    </button>
   )
 }
 

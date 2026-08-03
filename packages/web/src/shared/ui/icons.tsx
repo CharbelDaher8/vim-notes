@@ -64,6 +64,15 @@ export const CheckSquare = (props: IconProps) => (
 export const Bell = (props: IconProps) => (
   <Icon {...props} d="M7 9a5 5 0 0 1 10 0v3.6l1.5 2.9h-13L7 12.6V9Zm3 9a2 2 0 0 0 4 0" />
 )
+/* Three nodes and the two edges between them -- the smallest thing that reads
+   as a graph rather than as three dots. */
+export const GraphIcon = (props: IconProps) => (
+  <Icon
+    {...props}
+    d="M7 7.5a2.5 2.5 0 1 0 0-.01M17.5 6a2 2 0 1 0 0-.01M16 18a2.5 2.5 0 1 0 0-.01M9 8.5l5.5 8M9.2 6.6l6.2-1"
+  />
+)
+
 export const LinkIcon = (props: IconProps) => (
   <Icon
     {...props}
