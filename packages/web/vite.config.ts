@@ -49,9 +49,17 @@ export default defineConfig({
   },
 
   test: {
-    // Everything under test here is deliberately DOM-free: the platform fake,
-    // the pure models, the schedulers. Rendering React would need jsdom, which
-    // is not a dependency of this package.
+    /**
+     * Node by default, because most of what is under test here is genuinely
+     * DOM-free -- the platform fake, the pure models, the schedulers -- and a
+     * jsdom environment costs a few hundred milliseconds per file to build.
+     *
+     * A file that needs a DOM opts in with `// @vitest-environment jsdom` on
+     * its first line. That is not a formality: this used to be node with no
+     * escape hatch and no jsdom installed, which meant nothing in the suite
+     * had ever constructed an `EditorView`, and a vim mode that was never
+     * loaded into one shipped green. See create-editor.test.ts.
+     */
     environment: 'node',
     include: ['src/**/*.test.ts'],
   },

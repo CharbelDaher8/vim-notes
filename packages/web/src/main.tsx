@@ -26,6 +26,7 @@ import {
   TauriPlatform,
   WebPlatform,
   createNotesClient,
+  registerServiceWorker,
   type Platform,
 } from './platform'
 
@@ -100,6 +101,16 @@ const queryClient = new QueryClient({
       retry: 1,
     },
   },
+})
+
+// What makes the deployed app installable to a phone home screen. Reads the
+// build flags here, at the composition root, rather than inside the module --
+// same reason as `choosePlatform` above: the one file that knows which
+// environment this is stays the one file that knows.
+registerServiceWorker({
+  production: import.meta.env.PROD,
+  supported: 'serviceWorker' in navigator,
+  tauri: isRunningInTauri(),
 })
 
 const container = document.getElementById('root')
