@@ -156,6 +156,16 @@ const schema = z.object({
     .min(60_000)
     .default(30 * 60_000),
 
+  /**
+   * Where the news aggregator's API answers, if there is one.
+   *
+   * Empty by default, and empty is a supported configuration rather than a
+   * misconfiguration: the aggregator is a separate application in a separate
+   * repository, and a deployment that never cloned it must serve notes exactly
+   * as it did before. The client is told "not configured" and renders nothing.
+   */
+  NEWS_API_URL: z.string().default(''),
+
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
 

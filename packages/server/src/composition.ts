@@ -4,6 +4,7 @@ import { AutoCommitter } from './adapters/auto-committer'
 import { ChokidarFileWatcher } from './adapters/chokidar-file-watcher'
 import { FsNoteStore } from './adapters/fs-note-store'
 import { GitVersionControl } from './adapters/git-version-control'
+import { HttpNewsFeed } from './adapters/http-news-feed'
 import { MemoryNoteIndex } from './adapters/memory-note-index'
 import { NodePtyTerminalHost } from './adapters/node-pty-terminal-host'
 import { RipgrepSearch } from './adapters/ripgrep-search'
@@ -113,8 +114,14 @@ export async function createApplication(config: Config): Promise<Application> {
   })
   syncScheduler.start()
 
+  // Constructed whether or not it is configured. An unconfigured one answers
+  // `status()` with `available: false` and never dials anything, which keeps
+  // "no news service" out of the shape of this object and out of every call
+  // site downstream -- see the note on optionality in http-news-feed.ts.
+  const news = new HttpNewsFeed({ baseUrl: config.NEWS_API_URL })
+
   return {
-    context: { notes, vcs, search, watcher, terminals, index },
+    context: { notes, vcs, search, watcher, terminals, index, news },
     terminals,
 
     shutdown: async () => {

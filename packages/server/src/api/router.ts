@@ -1,3 +1,4 @@
+import { newsRouter } from './routers/news'
 import { notesRouter } from './routers/notes'
 import { notesIndexRouter } from './routers/notes-index'
 import { repoRouter } from './routers/repo'
@@ -9,6 +10,7 @@ export const appRouter = router({
   index: notesIndexRouter,
   repo: repoRouter,
   search: searchRouter,
+  news: newsRouter,
 })
 
 /**

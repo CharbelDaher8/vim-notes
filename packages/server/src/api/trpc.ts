@@ -1,5 +1,6 @@
 import type {
   FileWatcher,
+  NewsFeed,
   NoteIndex,
   NoteStore,
   Search,
@@ -31,6 +32,11 @@ export interface AppContext {
   terminals: TerminalHost
   /** Todos, reminders and links, all derived from the notes and owning nothing. */
   index: NoteIndex
+  /**
+   * The news aggregator, which may not be deployed. Always present as an
+   * object; ask it `status()` rather than checking for its existence.
+   */
+  news: NewsFeed
 }
 
 const t = initTRPC.context<AppContext>().create()
