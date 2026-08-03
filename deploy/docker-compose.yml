@@ -90,6 +90,47 @@ services:
       # none of it is worth backing up and all of it is regenerable.
       - nvim-state:/state
 
+  # The news aggregator, as a read-only source the notes server queries.
+  #
+  # Its own repository (github.com/CharbelDaher8/news-aggregator), checked out
+  # beside this one and built from there rather than pulled from a registry --
+  # one fewer moving part, and auto-deploy.sh updates both checkouts together.
+  #
+  # No published port and no host binding: only the notes server talks to it,
+  # over this compose network. That is the whole access control, because the API
+  # has no authentication of its own (see agg/api.py). It must never gain a
+  # `ports:` entry.
+  #
+  # Optional in the sense that matters: if this service is absent or down, the
+  # notes server reports the news pane as unavailable and everything else works.
+  news:
+    # Behind a profile, which is what keeps this optional in the way that
+    # matters: without it, a box that has no news checkout cannot build this
+    # service, `docker compose up --build` fails, and the *notes* stop
+    # deploying. A missing side feature must not be able to do that.
+    #
+    # auto-deploy.sh passes --profile news only when the checkout is present,
+    # so the failure mode is "no news pane" rather than "no deploys".
+    profiles: ['news']
+
+    build:
+      context: ${NEWS_REPO_DIR:-../../news-aggregator}
+    restart: unless-stopped
+    init: true
+
+    environment:
+      # Only `refresh` uses this; the API serves what is already stored, so an
+      # expired token degrades to "no new items" rather than to a broken pane.
+      #
+      # Deliberately read from the environment rather than baked into the image:
+      # a token in a layer is a token in every copy of that image.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+
+    volumes:
+      # items.db, and the read/saved state in it. The one thing here worth
+      # keeping, so it is a named volume rather than a container layer.
+      - news-data:/app/data
+
   caddy:
     build:
       context: ..
@@ -120,5 +161,6 @@ services:
 
 volumes:
   nvim-state:
+  news-data:
   caddy-data:
   caddy-config:

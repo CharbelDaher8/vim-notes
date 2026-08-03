@@ -129,22 +129,29 @@ jobs:
           cp deploy/.env.example deploy/.env
           docker compose -f deploy/docker-compose.yml config >/dev/null
 
-      # The one line that decides who can reach a WebSocket onto a real shell.
-      # Cheap to assert, catastrophic to get wrong, and easy to break by
-      # accident while editing something unrelated nearby.
-      - name: Server publishes no ports and Caddy binds one address
+      # The lines that decide who can reach a WebSocket onto a real shell, and
+      # who can reach an unauthenticated feed API. Cheap to assert, catastrophic
+      # to get wrong, and easy to break by accident while editing something
+      # unrelated nearby.
+      #
+      # `--profile news` so the optional service is in the output too, rather
+      # than passing vacuously because the thing under test was filtered out.
+      - name: Only Caddy publishes a port, and it binds one address
         run: |
           cp deploy/.env.example deploy/.env
-          docker compose -f deploy/docker-compose.yml config --format json \
+          docker compose -f deploy/docker-compose.yml --profile news config --format json \
             | python3 -c '
           import json, sys
           services = json.load(sys.stdin)["services"]
-          if services["server"].get("ports"):
-              sys.exit("server publishes ports; it must only be reachable on the compose network")
+          for name in ("server", "news"):
+              if name not in services:
+                  sys.exit(f"{name} is missing from the compose file")
+              if services[name].get("ports"):
+                  sys.exit(f"{name} publishes ports; it must only be reachable on the compose network")
           published = [p.get("host_ip") for p in services["caddy"].get("ports", [])]
           if not published:
               sys.exit("caddy publishes nothing, so the stack is unreachable")
           if any(ip in (None, "", "0.0.0.0", "::") for ip in published):
               sys.exit(f"caddy is bound to every interface ({published}); it must bind one address")
-          print(f"ok: server unpublished, caddy bound to {published}")
+          print(f"ok: server and news unpublished, caddy bound to {published}")
           '

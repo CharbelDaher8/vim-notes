@@ -25,6 +25,12 @@ APP_DIR=${APP_DIR:-/srv/vim-notes/app}
 BRANCH=${BRANCH:-main}
 REPO=${REPO:-CharbelDaher8/vim-notes}
 
+# The news aggregator, checked out beside the app and built by the same compose
+# file. Updated here rather than by its own timer so that one deploy moves the
+# whole stack: two timers would mean the notes server could be talking to an API
+# from a different afternoon, with nothing saying so.
+NEWS_DIR=${NEWS_DIR:-/srv/vim-notes/news}
+
 cd "$APP_DIR"
 
 git fetch -q origin "$BRANCH"
@@ -96,8 +102,38 @@ esac
 echo "CI green, deploying ${remote_sha:0:7}"
 git merge -q --ff-only "origin/$BRANCH"
 
+# The news checkout, if it is there. Deliberately not fatal and deliberately
+# not gated on its own CI: it is a separate repository with a separate history,
+# and a fetch that fails should hold back the news pane, not the notes.
+#
+# `|| true` on the whole block rather than per command, because every way this
+# can fail has the same answer -- deploy the notes with whatever news code is
+# already on disk.
+profiles=""
+
+if [ -d "$NEWS_DIR/.git" ]; then
+	profiles="--profile news"
+	(
+		cd "$NEWS_DIR"
+		news_before=$(git rev-parse --short HEAD)
+		git fetch -q origin "$BRANCH" && git merge -q --ff-only "origin/$BRANCH"
+		news_after=$(git rev-parse --short HEAD)
+		if [ "$news_before" = "$news_after" ]; then
+			echo "news up to date at ${news_before}"
+		else
+			echo "news moved: ${news_before} -> ${news_after}"
+		fi
+	) || echo "could not update the news checkout; building whatever is on disk"
+else
+	echo "no news checkout at ${NEWS_DIR}; skipping the news service"
+fi
+
 cd "$APP_DIR/deploy"
-docker compose up -d --build
+# Unquoted on purpose: empty means "no profile", and "" as an argument is a
+# compose error. shellcheck would rather this were an array, which dash does
+# not have and this script is run by.
+# shellcheck disable=SC2086
+docker compose $profiles up -d --build
 
 # Images accumulate fast on a 64GB disk when every deploy builds two of them.
 docker image prune -f >/dev/null 2>&1 || true
