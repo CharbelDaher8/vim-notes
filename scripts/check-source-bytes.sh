@@ -37,7 +37,23 @@ cd "$(dirname "$0")/.."
 
 # Tracked files plus anything new that is not ignored, so a NUL is caught before
 # it is committed rather than after.
-git ls-files -z --cached --others --exclude-standard 'packages/*/src/*' 'scripts/*' \
+#
+# Binary assets are excluded because they are *supposed* to be full of NULs, and
+# there is one under src now: the icon font the terminal falls back to, which
+# lives beside the code that references it so the bundler puts it in the lazy
+# terminal chunk. Without this the check fails on every run and the failure
+# means nothing, which is the one outcome the header above argues is worse than
+# having no check at all.
+#
+# An exclusion list rather than an allow-list of source extensions: a new source
+# extension that nobody thought to add would be silently unchecked, and silently
+# unchecked is exactly the failure this file exists to avoid. A new binary type
+# announces itself loudly on the first run instead.
+git ls-files -z --cached --others --exclude-standard \
+	'packages/*/src/*' 'scripts/*' \
+	':(exclude)*.woff' ':(exclude)*.woff2' ':(exclude)*.ttf' ':(exclude)*.otf' \
+	':(exclude)*.png' ':(exclude)*.jpg' ':(exclude)*.jpeg' ':(exclude)*.gif' \
+	':(exclude)*.ico' ':(exclude)*.webp' ':(exclude)*.pdf' \
 	| python3 -c '
 import sys
 

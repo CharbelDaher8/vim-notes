@@ -1,3 +1,39 @@
+/*
+ * The icons a Nerd Font config draws, and nothing else.
+ *
+ * Everything printable stays in `--font-mono`; this is only ever reached for
+ * the private-use codepoints an ordinary font has no glyph for, which is
+ * exactly what a statusline, a file tree and diagnostic signs are made of.
+ * Without it every one of them is a tofu box.
+ *
+ * `font-display: block` rather than the usual `swap`. Only icons are drawn from
+ * it, so blocking means a brief gap where an icon has not appeared yet, while
+ * swapping means a visible flash of tofu boxes that then turn into icons. The
+ * gap is the better of the two, and it is bounded at three seconds.
+ *
+ * The grid does not depend on any of this: xterm measures its cell from the
+ * first font in the stack, which is `--font-mono` and already resolved -- see
+ * `terminalFontStack` in terminal-pane.tsx, where the ordering is the point.
+ * That is why nothing here has to wait for the font before opening a terminal.
+ *
+ * Only reachable from this file, which the lazy terminal chunk imports -- so
+ * the 400 kB is fetched by /term and never by the phone (DECISIONS §13).
+ */
+@font-face {
+  font-family: 'Nerd Symbols';
+  src: url('./nerd-symbols.woff2') format('woff2');
+  font-display: block;
+  /* Named so the browser knows it need not consult this font for ordinary
+     text. The ranges match scripts/build-nerd-font.sh, and the mismatch is
+     asymmetric: a codepoint in the font but missing here is simply never asked
+     for, while one claimed here and missing from the font renders as *nothing*
+     -- the browser picks this font on the strength of the range and then finds
+     no glyph. Measured, not assumed. The whole F0000 plane is claimed on
+     purpose; see the note about material-design in the build script. */
+  unicode-range:
+    U+E0A0-E0D4, U+E5FA-E6B7, U+E700-E8EF, U+EA60-EC1E, U+F000-F2FF, U+F400-F533, U+F0000-FFFFD;
+}
+
 .terminal {
   display: flex;
   flex-direction: column;

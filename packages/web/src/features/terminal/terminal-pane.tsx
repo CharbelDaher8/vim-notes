@@ -45,7 +45,7 @@ export function TerminalPane({ connect }: { connect: () => TerminalConnection })
       allowProposedApi: true,
       convertEol: false,
       cursorBlink: true,
-      fontFamily: readVar('--font-mono', 'monospace'),
+      fontFamily: terminalFontStack(),
       fontSize: 14,
       lineHeight: 1.2,
       // nvim redraws the whole screen constantly; a large scrollback is mostly
@@ -168,6 +168,32 @@ function describe(
 function readVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
   return value === '' ? fallback : value
+}
+
+/**
+ * The app's mono stack, with the icon font behind it.
+ *
+ * Order is the whole thing. `--font-mono` stays first, so xterm measures its
+ * cell from the font that draws the text -- the grid must not depend on whether
+ * an icon font has arrived. 'Nerd Symbols' then catches the private-use
+ * codepoints an ordinary mono font has no glyph for, which is every icon a
+ * Nerd Font config draws.
+ *
+ * Appended *inside* the stack rather than after it. `--font-mono` ends in the
+ * generic `monospace`, and while per-character fallback does keep walking past
+ * a family that lacks the glyph, that is a subtle rule to rest a feature on --
+ * the browser resolves the generic to a real font, and what a resolved generic
+ * reports for an unmapped codepoint is not something worth being clever about.
+ * Putting the icon font ahead of it makes the question not arise.
+ */
+function terminalFontStack(): string {
+  const mono = readVar('--font-mono', 'monospace')
+  const icons = "'Nerd Symbols'"
+
+  const generic = mono.lastIndexOf('monospace')
+  if (generic === -1) return `${mono}, ${icons}`
+
+  return `${mono.slice(0, generic)}${icons}, ${mono.slice(generic)}`
 }
 
 /** Built from the same tokens as the rest of the app, so the two match. */

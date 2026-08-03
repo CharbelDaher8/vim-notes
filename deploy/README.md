@@ -160,6 +160,42 @@ without it every push fails with a message about a missing transport.
 **`nvim-state` is a named volume.** Plugins, shada, undo history and the ssh
 known_hosts file live there. None of it is worth backing up.
 
+**A compiler is in the runtime image, on purpose.** `build-essential` and `fd`
+are there for the nvim config, not the server: `telescope-fzf-native` has
+`build = "make"` and `nvim-treesitter` compiles a parser the first time it meets
+a new filetype. Both happen at runtime inside the container, so a build-stage
+toolchain would not help. It costs about 250MB. `lazygit` is there for the same
+reason — `<leader>gg` opens it — and earns its keep besides, since this box
+auto-commits every save and lazygit is the quickest way to see what that did.
+
+## The nvim config
+
+`deploy/nvim-config/` is a **copy of `~/.config/nvim`**, committed so it deploys
+with everything else. Mounted read-only at `/config/nvim`, which
+`XDG_CONFIG_HOME=/config` makes nvim read exactly as it would `~/.config/nvim`.
+
+The copy is the thing to be careful about: nothing syncs it. Editing it here
+does not change your laptop, and editing your laptop does not change the box
+until you copy it over and push:
+
+```sh
+rsync -a --delete --exclude .DS_Store ~/.config/nvim/ deploy/nvim-config/
+```
+
+Two consequences worth knowing:
+
+- **The mount is read-only**, so a plugin manager that wants to write into
+  `~/.config/nvim` fails loudly rather than half-succeeding. Plugins install
+  into `~/.local/share/nvim`, which `XDG_DATA_HOME` points at the writable
+  `nvim-state` volume, so lazy.nvim and Mason work normally.
+- **vim-notes is a public repository.** This config carries no secrets today,
+  and it is worth rechecking before you paste an API key for some AI plugin
+  into it. If that ever changes, point `NVIM_CONFIG_DIR` in `deploy/.env` at a
+  private checkout instead and this directory stops being used.
+
+Anything the config shells out to has to exist in the image — `/term` is a
+shell (DECISIONS §3), so the way to check is to type the command and see.
+
 ## Backups
 
 The whole point of §2: GitHub is the offsite copy, and every clone is a complete

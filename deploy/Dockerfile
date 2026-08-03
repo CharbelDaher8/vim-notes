@@ -53,20 +53,65 @@ RUN pnpm --filter @vim-notes/server deploy --prod --legacy /srv/deps
 
 FROM node:22-slim AS server
 
-# The three binaries the server shells out to. This list has to agree with
-# `requiredBinaries` in packages/server/src/preflight.ts and with the install
-# step in .github/workflows/ci.yml -- nothing enforces that, so the server
-# checks all three at boot and says which one is missing.
+# What the server shells out to, and what a shell in /term is worth having.
+# This list has to agree with `requiredBinaries` in
+# packages/server/src/preflight.ts and with the install step in
+# .github/workflows/ci.yml -- nothing enforces that, so the server checks at
+# boot and says which one is missing.
 #
 # git     -- GitVersionControl shells out to it for every commit and sync.
 # openssh -- git needs it to reach GitHub over ssh (DECISIONS §2). Installing
 #            git alone gets you a push that fails with "unable to find ssh".
-# ripgrep -- what the Search adapter runs (the binary is `rg`).
-# neovim  -- not a development convenience. DECISIONS §3: real nvim in a pty is
-#            the product, and /term is worthless without it.
+# ripgrep -- what the Search adapter runs (the binary is `rg`), and what
+#            telescope's live grep runs too.
+# neovim  -- not a development convenience. DECISIONS §3: /term is a shell, and
+#            a shell on a notes server with no editor is a poor joke.
+#
+# The compiler is here for the config, not for the server. A modern nvim setup
+# compiles things on first launch and keeps doing it as you open new filetypes:
+# telescope-fzf-native has `build = "make"`, and nvim-treesitter with
+# `auto_install` builds a parser the first time it meets a language. Both happen
+# at *runtime*, inside this image, so a build-stage toolchain would not help.
+#
+# It costs about 250MB, which is the honest price of "my config, working". If
+# that ever matters more than it does, the lever is `auto_install = false` plus
+# a pre-built parser set, not dropping the compiler and finding out one filetype
+# at a time.
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends git openssh-client ripgrep ca-certificates curl \
+	&& apt-get install -y --no-install-recommends \
+	git openssh-client ripgrep ca-certificates curl \
+	build-essential fd-find \
 	&& rm -rf /var/lib/apt/lists/*
+
+# Debian ships it as `fdfind` -- the name `fd` was taken by another package --
+# and every config in the world calls it `fd`.
+RUN ln -s "$(command -v fdfind)" /usr/local/bin/fd
+
+# lazygit, because `<leader>gg` in the mounted config opens it and a keybinding
+# that errors is worse than one that is absent. Not in Debian, so it comes from
+# the release tarball and is pinned for the same reason nvim is: a rebuild
+# should not change the tools underneath you.
+#
+# It earns its place here beyond the config: this box auto-commits every save,
+# and lazygit is the fastest way to see what that has been doing.
+ARG LAZYGIT_VERSION=0.63.1
+# Declared here as well as before the nvim block below. A build ARG is scoped
+# from its declaration onward, so without this `${TARGETARCH:-amd64}` silently
+# reads empty and falls back to amd64 -- which is right on the box this deploys
+# to today and wrong the first time anyone builds on ARM, with the failure
+# arriving as an exec-format error inside lazygit rather than here.
+ARG TARGETARCH
+RUN set -eu; \
+	case "${TARGETARCH:-amd64}" in \
+	amd64) lazygit_arch=x86_64 ;; \
+	arm64) lazygit_arch=arm64 ;; \
+	*) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+	esac; \
+	curl -fsSL -o /tmp/lazygit.tar.gz \
+	"https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_linux_${lazygit_arch}.tar.gz"; \
+	tar -xzf /tmp/lazygit.tar.gz -C /usr/local/bin lazygit; \
+	rm -f /tmp/lazygit.tar.gz; \
+	lazygit --version
 
 # Debian ships an nvim old enough that a modern init.lua will not load, which
 # defeats the point of bringing your own config. The official build is pinned to

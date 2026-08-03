@@ -9,3 +9,10 @@ pnpm-lock.yaml
 # Generated icon set for the desktop bundle (binary, and derived from
 # packages/desktop/icons/app-icon.png).
 packages/desktop/src-tauri/icons/
+
+# A verbatim copy of ~/.config/nvim, deployed to the box (see deploy/README.md).
+# Reformatting it would make the copy differ from the original for reasons that
+# have nothing to do with the config, so every future `rsync` would show
+# spurious changes and the two would drift apart in the diff rather than in
+# fact. lazy-lock.json is written by lazy.nvim, in lazy.nvim's style.
+deploy/nvim-config/
