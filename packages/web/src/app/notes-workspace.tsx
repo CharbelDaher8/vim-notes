@@ -4,9 +4,11 @@ import { useWorkspaceStore } from '../shared/workspace-store'
 import { AppHeader } from './app-header'
 import { Sidebar } from './sidebar'
 import { useAppShortcuts } from './use-app-shortcuts'
+import { useNoteUrl } from './use-note-url'
 
 export function NotesWorkspace() {
   useAppShortcuts()
+  useNoteUrl()
 
   const drawerOpen = useWorkspaceStore((state) => state.drawerOpen)
 

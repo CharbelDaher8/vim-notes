@@ -38,6 +38,7 @@ import {
   MIN_LABEL_PIXELS,
   openTargetFor,
   type NodeShape,
+  type OpenTarget,
   type SceneNode,
 } from './graph-scene'
 import { readPins, writePins } from './pin-storage'
@@ -92,11 +93,22 @@ interface Drag {
 }
 
 export interface GraphViewProps {
+  /**
+   * What clicking a node does.
+   *
+   * Required, and deliberately not defaulted to "open it in the workspace
+   * store". That default is right in the sidebar, where an editor is sitting
+   * next to the graph, and silently wrong on `/graph`, where setting the open
+   * note updates a store nothing on the page is rendering -- which is precisely
+   * how this feature spent its first life looking broken. Making the caller say
+   * moves that decision to the two places that know the answer.
+   */
+  onOpen: (target: OpenTarget) => void
   /** Merged with the feature's own class, for whatever mounts this. */
   className?: string
 }
 
-export function GraphView({ className }: GraphViewProps) {
+export function GraphView({ onOpen, className }: GraphViewProps) {
   useGraphSync()
 
   const { data: graph, error, isPending } = useGraph()
@@ -508,17 +520,18 @@ export function GraphView({ className }: GraphViewProps) {
     }
   }
 
-  const open = useCallback((node: SceneNode) => {
-    // A pan that happened to start on a node is not a click on it.
-    if (draggedRef.current) return
+  const open = useCallback(
+    (node: SceneNode) => {
+      // A pan or a drag that happened to start on a node is not a click on it.
+      if (draggedRef.current) return
 
-    const target = openTargetFor(node)
-    if (target === null) return
+      const target = openTargetFor(node)
+      if (target === null) return
 
-    void useWorkspaceStore
-      .getState()
-      .openNote(target.path, target.line === undefined ? undefined : { line: target.line })
-  }, [])
+      onOpen(target)
+    },
+    [onOpen],
+  )
 
   const focusNode = useCallback(
     (index: number) => {

@@ -1,5 +1,11 @@
 import { lazy, Suspense } from 'react'
 
+// Type-only, and it has to stay that way: see the note on the lazy import
+// below. `import type` is erased before the bundler sees it, so this costs
+// nothing; dropping the keyword would pull the whole graph into the main chunk.
+import type { OpenTarget } from '../features/graph/graph-scene'
+import { noteHref } from './note-url'
+
 /**
  * Lazy for the same reason the terminal is: the graph carries a force
  * simulation and an SVG scene that nobody needs until they ask for the graph,
@@ -24,8 +30,26 @@ export function GraphRoute() {
     // the same way it does everywhere else; see use-visual-viewport.ts.
     <div className="route-fill">
       <Suspense fallback={<p className="route-loading">Loading graph…</p>}>
-        <GraphView />
+        <GraphView onOpen={openInWorkspace} />
       </Suspense>
     </div>
+  )
+}
+
+/**
+ * Clicking a node here leaves for the workspace, carrying the note in the URL.
+ *
+ * There is no editor on this route, so the store this used to write to had
+ * nobody rendering it: clicking a node updated the window title and did nothing
+ * else, which is the same "correct, tested, never connected" shape as the rest
+ * of DECISIONS §6.
+ *
+ * A real navigation rather than a client-side transition, for the reason the
+ * header links are: the graph's chunk and its simulation are dropped on the way
+ * out rather than left resident behind the editor.
+ */
+function openInWorkspace(target: OpenTarget): void {
+  window.location.assign(
+    noteHref(target.path, target.line === undefined ? null : { line: target.line }),
   )
 }
