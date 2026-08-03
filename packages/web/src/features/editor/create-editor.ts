@@ -37,7 +37,7 @@ import { editorCommands, type EditorCommands } from './editor-commands'
 import { editorTheme } from './editor-theme'
 import { findLinkAt, markdownDecorations } from './markdown-decorations'
 import { loadMarkdownLanguage, markdownLanguageExtension } from './markdown-language'
-import { loadVim, vimExtension } from './vim-extension'
+import { vimExtension } from './vim-extension'
 import { wikiLinksExtension, type WikiLinkContext } from './wikilink-extension'
 
 /**
@@ -110,7 +110,10 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
       ]),
     ),
 
-    vimCompartment.of(vimExtension(vimEnabled)),
+    // Wrapped rather than passed by name: this runs while the view is still
+    // being built, and `applyVim` -- which needs that view -- does not exist
+    // until it is. By the time the chunk lands it does.
+    vimCompartment.of(vimExtension(vimEnabled, () => applyVim())),
     editorCommands.of(commands),
 
     history(),
@@ -203,21 +206,34 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
    */
   let destroyed = false
 
+  /**
+   * Bring the running editor in line with the current flag.
+   *
+   * Vim arrives in its own chunk, so the first pass through here with it on
+   * configures an empty extension and `vimExtension` orders the download; this
+   * runs again when it lands. Anything toggled in the meantime wins, because
+   * every call re-reads `vimEnabled` rather than the value that started the
+   * request.
+   *
+   * The download therefore follows the flag, not the constructor, which looks
+   * like the wrong place for it until you notice that `options.vimEnabled` is
+   * false on every desktop: the preference resolves from media queries in an
+   * effect that runs after the pane mounts, so the pane builds this editor with
+   * vim off and turns it on a tick later. Ordering the chunk in the constructor
+   * meant ordering it only for a case that never happens in a production build
+   * -- development got away with it because StrictMode mounts twice, and the
+   * second mount does see the resolved flag.
+   */
   const applyVim = () => {
     if (destroyed) return
     view.dispatch({
       effects: [
-        vimCompartment.reconfigure(vimExtension(vimEnabled)),
+        vimCompartment.reconfigure(vimExtension(vimEnabled, applyVim)),
         keyboardCompartment.reconfigure(keyboardExtensions(vimEnabled)),
         gutterCompartment.reconfigure(gutterExtensions(vimEnabled)),
       ],
     })
   }
-
-  // Vim arrives in its own chunk (see vim-extension.ts), so the first
-  // reconfigure with it on may land a frame or two after the request. Anything
-  // toggled in the meantime wins -- `applyVim` always reads the current flag.
-  if (vimEnabled) void loadVim().then(applyVim)
 
   // Always wanted, just not needed for the first paint.
   void loadMarkdownLanguage().then(() => {

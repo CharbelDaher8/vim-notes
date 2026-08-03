@@ -71,6 +71,23 @@ export default tseslint.config(
     },
   },
 
+  // The service worker runs in a worker, not a page: no `window`, and a set of
+  // globals no other file here sees. Listed by hand rather than pulling in the
+  // `globals` package for five names -- if this list grows much past this, take
+  // the dependency instead.
+  {
+    files: ['packages/web/public/sw.js'],
+    languageOptions: {
+      globals: {
+        caches: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        self: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+
   // Tests may reach for whatever they need.
   {
     files: ['**/*.test.ts', '**/*.spec.ts', '**/test/**'],

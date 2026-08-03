@@ -7,9 +7,8 @@
  * exactly the device that can least afford to download it. A dynamic import
  * moves it into its own chunk that a phone never fetches.
  *
- * The cost is that turning vim on is asynchronous. `createEditor` handles that
- * by reconfiguring the compartment when the module lands and re-reading the
- * flag at that point, so a toggle during the load is not lost.
+ * The cost is that turning vim on is asynchronous, and `vimExtension` below is
+ * shaped around making that cost impossible to forget.
  */
 import type { Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
@@ -39,9 +38,38 @@ export function loadVim(): Promise<VimModule | null> {
   return loading
 }
 
-/** `[]` until the chunk is in memory; call `loadVim` to make it non-empty. */
-export function vimExtension(enabled: boolean): Extension {
-  if (!enabled || loaded === null) return []
+/**
+ * The extension for the current flag -- and, while the chunk is still missing,
+ * the request that fetches it.
+ *
+ * `onLoad` is required on purpose. Until the chunk is in memory this returns
+ * `[]`, which inside a compartment is indistinguishable from vim being off:
+ * the editor is configured for vim, has no vim in it, and nothing anywhere
+ * says so. Asking for the extension is therefore also what orders it, and the
+ * caller cannot end up configured-but-empty forever by forgetting a separate
+ * call.
+ *
+ * It used to be a separate call, and it was forgotten. The editor is built
+ * before the vim preference is known -- it resolves from media queries in an
+ * effect that runs after the pane mounts -- so it is built with vim off and
+ * switched on a tick later. Only construction fetched the chunk, so on every
+ * desktop the store said vim, the status bar said VIM, and the buffer had no
+ * vim keymap in it.
+ *
+ * The fetch is memoised in `loadVim`, so asking from three call sites is still
+ * one request, and `onLoad` is not called if it fails -- reconfiguring to the
+ * same empty extension would achieve nothing.
+ */
+export function vimExtension(enabled: boolean, onLoad: () => void): Extension {
+  if (!enabled) return []
+
+  if (loaded === null) {
+    void loadVim().then((module) => {
+      if (module !== null) onLoad()
+    })
+    return []
+  }
+
   return loaded.vim({ status: true })
 }
 
