@@ -1,13 +1,13 @@
 import { notePathBasename, notePathParent } from '@vim-notes/core'
 
 import { useVimMode } from '../features/editor/use-vim-mode'
+import { DockLink, DockMenu, useHasRoomForDock } from '../features/dock/dock-links'
 import { useNewsStatus } from '../features/news/use-news'
 import { useThemeStore } from '../shared/theme'
 import { useMediaQuery } from '../shared/use-media-query'
-import { GraphIcon, Keyboard, Menu, Moon, Sun } from '../shared/ui/icons'
+import { Keyboard, Menu, Moon, Sun } from '../shared/ui/icons'
 import { useWorkspaceStore } from '../shared/workspace-store'
 import { DevTools } from './dev-tools'
-import { useHasRoomForGraph } from './graph-panel'
 import { ServerSettings } from './server-settings'
 
 export function AppHeader() {
@@ -43,10 +43,7 @@ export function AppHeader() {
         )}
       </h1>
 
-      <GraphToggle />
-      <GraphLink />
-      <NewsLink />
-      <TerminalLink />
+      <DockLinks />
 
       <DevTools />
 
@@ -82,83 +79,32 @@ export function AppHeader() {
 }
 
 /**
- * Only offered where there is a keyboard.
+ * The three dockable views: a link to each full page, and a drag handle into
+ * the dock beside it.
  *
- * `/term` is a real login shell in a pty; DECISIONS.md §3 and §4 are explicit
- * that it is the desktop client and that a touch device gets CodeMirror
- * instead. Offering it on a phone would be offering a shell prompt, and then
- * modal editing with no Esc key, to a thumb.
+ * `/term` is offered only where there is a keyboard. DECISIONS §3 and §4 are
+ * explicit that it is the desktop client and a touch device gets CodeMirror
+ * instead; offering it to a thumb would be offering a shell prompt, and then
+ * modal editing with no Esc key. The graph and the news are fine under a thumb
+ * -- both are things you read.
  *
- * A plain link, not a client-side transition: the two routes are closer to two
- * applications than two pages, and a full load means `/` is not still resident
- * behind a terminal session that may run for hours.
- */
-function TerminalLink() {
-  const hasKeyboard = useMediaQuery('(hover: hover) and (pointer: fine)')
-  if (!hasKeyboard) return null
-
-  return (
-    <a className="app__term-link" href="/term" title="Open a shell on the notes server">
-      /term
-    </a>
-  )
-}
-
-/**
- * Shows the same graph beside the editor rather than instead of it.
- *
- * Only where there is room for both -- see `useHasRoomForGraph`. Offering a
- * toggle that renders nothing would be worse than not offering it, and the
- * narrow case already has `/graph` next to this button.
- */
-function GraphToggle() {
-  const open = useWorkspaceStore((state) => state.graphPanelOpen)
-  const room = useHasRoomForGraph()
-
-  if (!room) return null
-
-  return (
-    <button
-      type="button"
-      className="icon-button"
-      aria-pressed={open}
-      title={open ? 'Hide the graph (Ctrl/Cmd+G)' : 'Show the graph beside the note (Ctrl/Cmd+G)'}
-      aria-label="Graph panel"
-      onClick={() => useWorkspaceStore.getState().setGraphPanelOpen(!open)}
-    >
-      <GraphIcon />
-    </button>
-  )
-}
-
-/**
- * Only shown when there is a feed to show, so a deployment without the
+ * News appears only once there is a feed behind it, so a deployment without the
  * aggregator has no link to a page explaining that it has no aggregator.
  */
-function NewsLink() {
-  const { data: status } = useNewsStatus()
-  if (status?.available !== true) return null
+function DockLinks() {
+  const hasKeyboard = useMediaQuery('(hover: hover) and (pointer: fine)')
+  const hasRoom = useHasRoomForDock()
+  const { data: news } = useNewsStatus()
 
   return (
-    <a className="app__term-link" href="/news" title="Today's feed">
-      /news
-    </a>
-  )
-}
-
-/**
- * Unlike the terminal, this is offered on a phone too: the graph is something
- * you read rather than type into, and pan and zoom work under a thumb.
- *
- * Still a plain link rather than a client-side transition, so the graph chunk
- * and its simulation are dropped entirely on the way back to the notes instead
- * of sitting in memory behind them.
- */
-function GraphLink() {
-  return (
-    <a className="app__term-link" href="/graph" title="See how the notes connect">
-      /graph
-    </a>
+    <>
+      <DockLink id="graph" />
+      {news?.available === true ? <DockLink id="news" /> : null}
+      {hasKeyboard ? <DockLink id="terminal" /> : null}
+      {/* The pointer-free path to the same thing, and pointless where the dock
+          itself is hidden. */}
+      {hasRoom ? <DockMenu /> : null}
+    </>
   )
 }
 

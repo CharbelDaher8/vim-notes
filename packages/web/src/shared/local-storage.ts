@@ -27,6 +27,9 @@ export const SETTING_KEYS = {
   vimMode: 'vim-notes:vim-mode',
   sidebarWidth: 'vim-notes:sidebar-width',
   backlinks: 'vim-notes:backlinks',
+  // Replaced by `dock`, which holds the same fact plus the rest of the layout.
+  // Left listed so the key is not silently reused for something else later.
   graphPanel: 'vim-notes:graph-panel',
+  dock: 'vim-notes:dock',
   graphPins: 'vim-notes:graph-pins',
 } as const

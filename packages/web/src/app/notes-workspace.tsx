@@ -2,7 +2,7 @@ import { EditorPane } from '../features/editor/editor-pane'
 import { CommandPalette } from '../features/search/command-palette'
 import { useWorkspaceStore } from '../shared/workspace-store'
 import { AppHeader } from './app-header'
-import { GraphPanel } from './graph-panel'
+import { Dock } from '../features/dock/dock'
 import { Sidebar } from './sidebar'
 import { useAppShortcuts } from './use-app-shortcuts'
 import { useNoteUrl } from './use-note-url'
@@ -32,7 +32,7 @@ export function NotesWorkspace() {
           <EditorPane />
         </main>
 
-        <GraphPanel />
+        <Dock />
       </div>
 
       {/* Outside app__body: `<dialog>` renders in the top layer, so its place

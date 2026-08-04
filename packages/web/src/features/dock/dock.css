@@ -1,0 +1,207 @@
+.dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* Only while something is being dragged, so there is a target to drop onto. */
+.dock[data-empty] {
+  display: grid;
+  place-content: center;
+  border-left: 2px dashed var(--accent);
+}
+
+.dock[data-dropping] {
+  /* The whole column is the target, so it says so rather than relying on a
+     thin line somewhere inside it. */
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+}
+
+.dock__slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dock__panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.dock__header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: none;
+  padding: 0.25rem 0.35rem 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+  /* The whole header is the drag handle. A dedicated grip would be one more
+     thing to aim at in a strip that is already only 26px tall. */
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.dock__header:active {
+  cursor: grabbing;
+}
+
+.dock__title {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.dock__link,
+.dock__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  min-height: 1.4rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dock__link:hover,
+.dock__close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.dock__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --- Resizing --------------------------------------------------------------- */
+
+.dock__divider {
+  flex: none;
+  height: 5px;
+  margin-top: -3px;
+  background: transparent;
+  cursor: row-resize;
+  /* Above the panel body, or an iframe-like child (xterm's canvas) eats the
+     press before the divider sees it. */
+  position: relative;
+  z-index: 2;
+  touch-action: none;
+}
+
+.dock__divider:hover,
+.dock__divider:active {
+  background: var(--accent-soft);
+}
+
+.dock__edge {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  margin-left: -3px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.dock__edge:hover,
+.dock__edge:active {
+  background: var(--accent-soft);
+}
+
+/* --- Dropping --------------------------------------------------------------- */
+
+.dock__drop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  z-index: 4;
+}
+
+.dock__notice {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  margin: 0;
+  padding: 1rem;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+/* The dock is a desktop affordance. On a phone the editor needs every pixel,
+   and each panel already has a full-page route reachable from the header. */
+@media (max-width: 63.999rem) {
+  .dock {
+    display: none;
+  }
+}
+
+/* --- The header's docking controls ------------------------------------------ */
+
+/* A link that is already in the dock: still a link to its page, but the dock is
+   where it currently is, so it reads as active rather than as an invitation. */
+.app__term-link[data-docked] {
+  color: var(--accent);
+}
+
+.dock-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.dock-menu__list {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 9rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.dock-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dock-menu__item:hover {
+  background: var(--surface-hover);
+}
+
+.dock-menu__check {
+  width: 1ch;
+  color: var(--accent);
+}

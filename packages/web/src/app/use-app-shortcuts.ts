@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 
+import { useDockStore } from '../features/dock/dock-store'
 import { useWorkspaceStore } from '../shared/workspace-store'
 
 /**
@@ -55,8 +56,7 @@ export function useAppShortcuts(): void {
       // back and surprises you when the window grows.
       if (event.key === 'g') {
         event.preventDefault()
-        const { graphPanelOpen, setGraphPanelOpen } = useWorkspaceStore.getState()
-        setGraphPanelOpen(!graphPanelOpen)
+        useDockStore.getState().toggle('graph')
       }
     }
 
