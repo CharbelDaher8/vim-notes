@@ -487,7 +487,10 @@ function buildPie(
  * the order they were written, so the picture does not rearrange itself when a
  * value changes.
  */
-function foldSlices(labels: string[], series: ChartSeries): { labels: string[]; series: ChartSeries } {
+function foldSlices(
+  labels: string[],
+  series: ChartSeries,
+): { labels: string[]; series: ChartSeries } {
   if (labels.length <= MAX_SLICES) return { labels, series }
 
   const kept = labels
