@@ -135,6 +135,68 @@ See also [the git book](https://git-scm.com/book) when rebasing goes wrong.
 [Links](https://example.com) render with the URL dimmed so the line stays
 readable.
 `,
+
+  'reference/data-blocks.md': `# Data blocks
+
+A \`chart\` fence is drawn rather than shown. Put the cursor in one and it is
+text again -- there is nothing to render *to*, so this is the only editing
+model there is.
+
+Options go above the rows, one per line. Rows are a pipe table or plain CSV,
+whichever suits the moment; the first column is the labels and the rest are the
+values.
+
+\`\`\`chart
+type: bar
+title: Hours on the thing
+month, building, reading
+May, 34, 12
+June, 41, 9
+July, 28, 22
+\`\`\`
+
+\`\`\`chart line
+title: Bundle size, gzipped kB
+sort: none
+week, initial, terminal
+1, 214, 85
+2, 221, 85
+3, 198, 0
+4, 191, 0
+\`\`\`
+
+Flip the type and the same numbers are a different picture. A pie needs one
+column of values, and folds anything past six slices into "Other".
+
+\`\`\`chart pie
+title: Where the week went
+format: percent
+| doing | share |
+| ----- | ----- |
+| building | 46 |
+| reading | 21 |
+| meetings | 18 |
+| everything else | 15 |
+\`\`\`
+
+\`table\` is the default, and the only type that never has to be numeric.
+
+\`\`\`chart table
+| what | when | state |
+| ---- | ---- | ----- |
+| conflict dialog | Thursday | done |
+| chart blocks | today | writing |
+| desktop launch bug | someday | undiagnosed |
+\`\`\`
+
+A block that cannot be drawn says why, on the line that caused it:
+
+\`\`\`chart bar
+month, revenue
+Jan, 120
+Feb, not yet
+\`\`\`
+`,
 }
 
 /**
