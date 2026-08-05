@@ -125,8 +125,6 @@ const CORNER = 4
 
 const AXIS_FONT = 11
 const CHAR_WIDTH = 6.1
-const TITLE_HEIGHT = 22
-const LEGEND_HEIGHT = 22
 const CATEGORY_HEIGHT = 20
 const PAD_TOP = 10
 const PAD_RIGHT = 12
@@ -165,15 +163,14 @@ export function buildChartScene(spec: ChartSpec, width: number): ChartScene | nu
     Math.max(...tickLabels.map((label) => label.length)) * CHAR_WIDTH + 10,
   )
 
-  const top = PAD_TOP + (spec.title === null ? 0 : TITLE_HEIGHT) + legendBand(spec.legend, 'top')
-  const bottom = CATEGORY_HEIGHT + legendBand(spec.legend, 'bottom')
-  const right = PAD_RIGHT + (spec.legend === 'right' ? legendWidth(entries) : 0)
-
+  // The title and the legend are HTML around this drawing, not text inside it,
+  // so the plot owns the whole box: wrapping a long legend and selecting a
+  // title are things the browser does well and SVG text does not.
   const plot: Box = {
     x: gutter,
-    y: top,
-    width: Math.max(10, width - gutter - right),
-    height: Math.max(10, height - top - bottom),
+    y: PAD_TOP,
+    width: Math.max(10, width - gutter - PAD_RIGHT),
+    height: Math.max(10, height - PAD_TOP - CATEGORY_HEIGHT),
   }
 
   const toY = (value: number) =>
@@ -375,15 +372,11 @@ function pieScene(
   const values = spec.series[0]?.values ?? []
   const total = values.reduce((sum, value) => sum + value, 0)
 
-  const top = PAD_TOP + (spec.title === null ? 0 : TITLE_HEIGHT) + legendBand(spec.legend, 'top')
-  const bottom = PAD_TOP + legendBand(spec.legend, 'bottom')
-  const right = spec.legend === 'right' ? legendWidth(legend.entries) : 0
-
   const plot: Box = {
     x: 0,
-    y: top,
-    width: Math.max(10, width - right),
-    height: Math.max(10, height - top - bottom),
+    y: PAD_TOP,
+    width: Math.max(10, width),
+    height: Math.max(10, height - PAD_TOP * 2),
   }
 
   const center = { x: plot.x + plot.width / 2, y: plot.y + plot.height / 2 }
@@ -596,14 +589,14 @@ function stackedExtent(spec: ChartSpec): { min: number; max: number } {
   return { min, max }
 }
 
-function legendBand(placement: LegendPlacement, side: 'top' | 'bottom'): number {
-  return placement === side ? LEGEND_HEIGHT : 0
-}
-
-function legendWidth(entries: LegendEntry[]): number {
-  const widest = Math.max(...entries.map((entry) => entry.name.length), 1)
-  return Math.min(160, widest * CHAR_WIDTH + 26)
-}
+/**
+ * How much horizontal room a `legend: right` costs the drawing.
+ *
+ * Fixed rather than measured because the caller has to subtract it *before*
+ * the scene is built, and a scene whose width depended on rendered text would
+ * have to be built twice.
+ */
+export const LEGEND_WIDTH = 132
 
 function summarise(spec: ChartSpec): string {
   const names = spec.series.map((series) => series.name)
