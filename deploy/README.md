@@ -196,6 +196,31 @@ Two consequences worth knowing:
 Anything the config shells out to has to exist in the image — `/term` is a
 shell (DECISIONS §3), so the way to check is to type the command and see.
 
+## The daily refresh
+
+`refresh` fetches 29 sources and runs the LLM pass, which takes minutes and
+costs tokens, so it is a scheduled job rather than something the API does on
+demand. The units live here and are installed once:
+
+```sh
+sudo cp deploy/vim-notes-news.service deploy/vim-notes-news.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vim-notes-news.timer
+
+systemctl list-timers vim-notes-news.timer   # when it next fires
+journalctl -u vim-notes-news -n 50           # what the last run did
+sudo systemctl start vim-notes-news.service  # run one now
+```
+
+It fires at **06:00 Lebanon time**, written as `Asia/Beirut` rather than a UTC
+offset so it stays at six through daylight saving — 03:00 UTC in summer, 04:00
+in winter. `Persistent=true` means a box that was asleep at six refreshes once
+when it wakes rather than skipping the day.
+
+The only thing it needs that the API does not is `CLAUDE_CODE_OAUTH_TOKEN`. A
+run with no token, or an expired one, fails the unit and leaves the feed
+exactly as it was — the reader keeps serving what is already stored.
+
 ## Backups
 
 The whole point of §2: GitHub is the offsite copy, and every clone is a complete

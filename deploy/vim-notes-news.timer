@@ -1,0 +1,25 @@
+[Unit]
+Description=Refresh the news feed every morning at 06:00 Lebanon time
+
+[Timer]
+# The timezone is named rather than converted, and that is the whole point of
+# this line. Lebanon is UTC+3 in summer and UTC+2 in winter, so a fixed
+# `03:00 UTC` would silently become 05:00 local on the last Sunday in October
+# and stay wrong until March. systemd resolves the zone at each elapse:
+# verified on the box, this fires at 03:00 UTC in August and 04:00 UTC in
+# December -- 06:00 in Beirut both times.
+#
+# Needs systemd 252 or newer for the suffix; the box runs 255.
+OnCalendar=*-*-* 06:00:00 Asia/Beirut
+
+# Ten minutes of jitter. Nothing here is load-bearing at the second, and 29
+# sources all being fetched at exactly 06:00:00 is a pattern worth not having.
+RandomizedDelaySec=600
+
+# A box that was asleep at six runs this once when it comes back, rather than
+# skipping the day. Once, not once per day missed -- which is what you want for
+# a fetch whose whole job is "what is new".
+Persistent=true
+
+[Install]
+WantedBy=timers.target

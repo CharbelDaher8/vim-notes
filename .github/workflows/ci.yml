@@ -120,6 +120,23 @@ jobs:
           bash -n deploy/bootstrap.sh
           bash -n deploy/auto-deploy.sh
 
+      # The timers, which nothing else can check. A unit file is only ever read
+      # by the box it is installed on, so a typo in an OnCalendar expression is
+      # not a failure -- it is a job that quietly never runs, discovered weeks
+      # later by noticing the feed is stale.
+      #
+      # `systemd-analyze calendar` also normalises, so the printed line is worth
+      # reading in the log: it says what the expression actually means, which
+      # for anything involving a timezone is not always what it looks like.
+      - name: Timer schedules parse
+        run: |
+          for timer in deploy/*.timer; do
+            spec=$(sed -n 's/^OnCalendar=//p' "$timer")
+            [ -n "$spec" ] || { echo "::error::${timer} has no OnCalendar"; exit 1; }
+            echo "${timer}: ${spec}"
+            systemd-analyze calendar "$spec" | sed 's/^/  /'
+          done
+
       # Copying the example into place is the point, not a workaround: the
       # compose file fails on any `${VAR:?}` it cannot resolve, so this asserts
       # that .env.example actually contains every variable a deployment needs.

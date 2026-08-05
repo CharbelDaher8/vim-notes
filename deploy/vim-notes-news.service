@@ -1,0 +1,27 @@
+[Unit]
+Description=Fetch and score the news feed
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=azureuser
+WorkingDirectory=/srv/vim-notes/app/deploy
+
+# `up -d` first, then `exec` into what is running, rather than `run --rm`.
+#
+# `run` would start a second container against the same SQLite file. WAL makes
+# that survivable, but it also means two containers holding the Claude token and
+# two ideas of which one owns the database -- for no gain, since the API
+# container is already up with everything this needs.
+#
+# The `up -d` is what makes the job self-healing: exec into a stopped container
+# fails, and "the API was down at 6am" should end with a refreshed feed rather
+# than with a failed unit and a stale one.
+ExecStartPre=/usr/bin/docker compose --profile news up -d news
+ExecStart=/usr/bin/docker compose --profile news exec -T news python -m agg.cli refresh
+
+# Measured at 400s for 29 sources and 160 items through the LLM pass. This is
+# room for a bad day -- a slow model, a source that hangs to its own timeout --
+# without letting a wedged run block tomorrow's.
+TimeoutStartSec=1800
