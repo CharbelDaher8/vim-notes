@@ -33,6 +33,7 @@ import {
   placeholder,
   rectangularSelection,
 } from '@codemirror/view'
+import { chartBlocks } from '../charts/chart-extension'
 import { editorCommands, type EditorCommands } from './editor-commands'
 import { editorTheme } from './editor-theme'
 import { findLinkAt, markdownDecorations } from './markdown-decorations'
@@ -123,6 +124,10 @@ export function createEditor(options: CreateEditorOptions): EditorHandle {
     // breaking the line. Empty until the chunk lands; see markdown-language.ts.
     languageCompartment.of(markdownLanguageExtension()),
     markdownDecorations,
+    // After the decorations on purpose: those style the fence lines a chart
+    // block replaces, and a replaced line is never drawn, so the two never
+    // paint the same thing twice.
+    chartBlocks(),
     wikiLinkCompartment.of(wikiLinksExtension(wikiLinks)),
     // Empty twice over at first: the chunk is not here yet and the client does
     // not know which notes exist. `applyWikiLinks` runs again for each.
