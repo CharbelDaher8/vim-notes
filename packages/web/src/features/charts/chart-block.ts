@@ -372,6 +372,16 @@ function buildSpec(type: ChartType, table: Table, options: Map<OptionKey, Option
     }
   }
 
+  let sliceLabels = labels
+  let chartSeries = foldSeriesTail(series)
+
+  if (type === 'pie') {
+    const pie = buildPie(labels, series, valueColumns?.line ?? -1)
+    if (pie.ok === false) return pie
+    sliceLabels = pie.value.labels
+    chartSeries = [pie.value.series]
+  }
+
   const stacked = readBoolean(options, 'stacked', false)
   if (stacked.ok === false) return stacked
 
@@ -409,16 +419,92 @@ function buildSpec(type: ChartType, table: Table, options: Map<OptionKey, Option
     spec: {
       type,
       title: options.get('title')?.value ?? null,
-      labels,
+      labels: sliceLabels,
       labelColumn: table.columns[xIndex] ?? '',
-      series: foldSeriesTail(series),
+      series: chartSeries,
       columns: displayed.map((index) => table.columns[index] ?? ''),
       rows: order.map((row) => displayed.map((index) => table.rows[row]?.[index] ?? '')),
       stacked: stacked.value,
-      legend: legend.value === 'auto' ? (series.length > 1 ? 'bottom' : 'none') : legend.value,
+      // A pie's identities are its slices, not its one column, so it needs the
+      // legend that a single-series bar chart does not.
+      legend:
+        legend.value === 'auto'
+          ? (type === 'pie' ? sliceLabels.length : series.length) > 1
+            ? 'bottom'
+            : 'none'
+          : legend.value,
       format: format.value,
       currency,
       height: height.value,
+    },
+  }
+}
+
+/**
+ * The three things a pie needs that a bar chart does not.
+ *
+ * One column, because two pies of the same circle is not a chart; no negative
+ * values, because a slice of a whole cannot be less than nothing; and a total
+ * above zero, because there is no whole to take a part of otherwise. All three
+ * are checked here rather than drawn badly later -- a wedge for a negative
+ * number renders as a plausible-looking picture of a false fact, which is the
+ * one failure mode worth spending an error message on.
+ */
+function buildPie(
+  labels: string[],
+  series: ChartSeries[],
+  line: number,
+): Result<{ labels: string[]; series: ChartSeries }> {
+  const values = series[0]
+  if (series.length !== 1 || values === undefined) {
+    return fail(
+      `A pie shows one column of values, and this block has ${String(series.length)}.` +
+        " Name the one to show with 'y:'.",
+      line,
+    )
+  }
+
+  const negative = values.values.findIndex((value) => value < 0)
+  if (negative !== -1) {
+    return fail(
+      `A pie cannot show a negative value, and '${labels[negative] ?? ''}' is one.` +
+        ' Use a bar chart.',
+      -1,
+    )
+  }
+
+  if (values.values.reduce((total, value) => total + value, 0) <= 0) {
+    return fail('A pie needs at least one value above zero.', -1)
+  }
+
+  return { ok: true, value: foldSlices(labels, values) }
+}
+
+/**
+ * Past six slices a pie stops being readable at a glance, which is the only
+ * thing a pie is for. The smallest are folded rather than the last few, since
+ * position in the block carries no meaning here -- and the kept slices stay in
+ * the order they were written, so the picture does not rearrange itself when a
+ * value changes.
+ */
+function foldSlices(labels: string[], series: ChartSeries): { labels: string[]; series: ChartSeries } {
+  if (labels.length <= MAX_SLICES) return { labels, series }
+
+  const kept = labels
+    .map((_, index) => index)
+    .sort((left, right) => (series.values[right] ?? 0) - (series.values[left] ?? 0))
+    .slice(0, MAX_SLICES - 1)
+    .sort((left, right) => left - right)
+
+  const keptSet = new Set(kept)
+  const folded = labels.map((_, index) => index).filter((index) => !keptSet.has(index))
+  const total = folded.reduce((sum, index) => sum + (series.values[index] ?? 0), 0)
+
+  return {
+    labels: [...kept.map((index) => labels[index] ?? ''), `Other (${String(folded.length)} more)`],
+    series: {
+      name: series.name,
+      values: [...kept.map((index) => series.values[index] ?? 0), total],
     },
   }
 }
