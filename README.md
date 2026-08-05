@@ -36,6 +36,34 @@ list, the due dates, the links and the graph are all parsed back out of the
 files every time, which is why a `TODO` typed in nvim shows up in the panel
 without nvim knowing this application exists.
 
+## Data blocks
+
+A ` ```chart ` fence is drawn rather than shown. Put the cursor in one and
+it is text again — there is no preview pane, so editing a chart is editing the
+markdown that makes it.
+
+````markdown
+```chart
+type: bar
+title: Hours on the thing
+month, building, reading
+May, 34, 12
+June, 41, 9
+```
+````
+
+Options go above the rows, one per line: `type`, `title`, `x`, `y`, `stacked`,
+`legend`, `format`, `currency`, `sort`, `height`. Rows are a markdown pipe table
+or plain CSV, whichever suits — the first column is the labels, the rest are the
+values. Types are `bar`, `line`, `pie` and `table`; `table` is the default and
+the only one that never has to be numeric, so changing one word turns a chart
+into its own data and back.
+
+The block is **parsed and drawn, never executed** — there is no transpile step
+and no `eval` anywhere in it. Notes arrive over git from a remote nothing
+protects from a force-push, so a note that draws a chart must not be a note that
+runs code. See DECISIONS.md §14.
+
 ## Layout
 
 ```

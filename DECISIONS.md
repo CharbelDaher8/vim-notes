@@ -287,6 +287,63 @@ the layout jumping when a line is inserted above a TODO. The line travels as its
 own field on the node instead — see `GraphNode.line`, and the comment there for
 why reconstructing it by matching label text is a trap.
 
+## 14. Data blocks are parsed and drawn, never executed
+
+A ` ```chart ` fence holds `key: value` options above rows written as a
+markdown pipe table or plain CSV. It is parsed to a plain data structure, turned
+into coordinates, and drawn as SVG. Four types: `bar`, `line`, `pie`, `table`.
+
+**Why not a language that compiles to TSX or Python,** which is the obvious
+design and was the original request:
+
+- Generated code has to be **executed**. In the browser that means `eval` over
+  text that arrived from a git remote which nothing protects from a force-push
+  (§2, and the same open question below). Today the worst a hostile note can do
+  is look strange. With a transpiler, opening a note runs code in the session.
+  §7 hand-rolls `NotePath` specifically so a note cannot reach `.git/hooks`;
+  this would reopen that door from the other side.
+- Python means a server round trip per render — so charts stop working in the
+  desktop app and while offline, and every keystroke inside a block hits the
+  network — or Pyodide, roughly 10 MB of wasm on a bundle that code-splits xterm
+  to save 84 kB (§13).
+- It is three layers where one works. `text → data → SVG`. The code-generation
+  layer is the hardest to test and does not put a single pixel on the screen.
+
+**No chart library, for the reason §13 gives for the graph.** The geometry is
+pure and therefore testable, and Recharts or Chart.js would hand back most of
+what splitting xterm bought. Measured cost of the whole feature: **+7.0 kB
+gzipped JS and +0.7 kB CSS, no new dependency.**
+
+**It renders in the editor, not in a preview pane,** because there is no preview
+pane — a note _is_ the markdown you are editing (see `markdown-decorations.ts`).
+So a chart is a block widget standing in for the fence while the cursor is
+elsewhere. Two consequences worth knowing: the decorations must come from a
+`StateField` rather than a `ViewPlugin`, since view plugins may not change the
+vertical layout; and the start of a block deliberately does not count as being
+inside it, or a note that opens with a chart would show its source until the
+cursor moved.
+
+**One block type, two renderings.** `table` and the chart types share a parser
+and a spec, so the same data becomes a table or a picture by changing one word.
+That is also the accessibility answer: every chart carries a disclosure holding
+its own numbers, which is what permits three light-mode series colours that sit
+below 3:1 against the page.
+
+**Consequences accepted:**
+
+- Eight series is the ceiling and six slices is the pie's. Past those, the tail
+  folds into "Other" rather than generating a hue, because a generated ninth
+  colour is indistinguishable from an existing one under colour-vision
+  deficiency. The full data stays in the table.
+- A bar chart always includes zero; a line chart does not. Bar _length_ encodes
+  the value, so a truncated axis misstates every ratio; line _position_ encodes
+  it, and forcing zero flattens the trend that was being asked about.
+- A pie refuses two value columns, a negative value, and a total of zero rather
+  than drawing a confident picture of a false fact.
+- The fence keeps the block out of the task list and the graph for free, because
+  §12 already skips fenced code. It also costs GitHub's native table rendering:
+  inside a fence, a pipe table is legible text rather than a rendered table.
+
 ## Open questions
 
 - **Hosting** is undecided. The stack ships as Docker Compose so the box can be
