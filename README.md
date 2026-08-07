@@ -64,6 +64,62 @@ and no `eval` anywhere in it. Notes arrive over git from a remote nothing
 protects from a force-push, so a note that draws a chart must not be a note that
 runs code. See DECISIONS.md §14.
 
+## Budget
+
+The same idea, applied to money. `Spent 42 groceries` is a line in a note, and
+so are the two figures the arithmetic cannot derive:
+
+```markdown
+Balance: 5000 USD as of 2026-07-01
+Income: 3000/month
+
+Spent 1200 rent
+Spent 62.40 #eating-out dinner with sam
+Spent 25 books 2026-07-15
+```
+
+|                                                          |                                                            |
+| -------------------------------------------------------- | ---------------------------------------------------------- |
+| ![The budget pane](docs/screenshots/budget.jpg)          | ![Derived data blocks](docs/screenshots/budget-blocks.jpg) |
+| Balance, categories and recent entries, folded on render | One query, three renderings — and it says what it left out |
+
+**There is no stored balance.** It is `opening + accrued income − spending
+since the anchor date`, recomputed every render, so correcting a typo in a
+spend from three weeks ago moves it and deleting the index costs nothing.
+Updating your balance is an _append_ — the latest `as of` date wins, and the
+old line stays as a record of what was true then.
+
+The first word is the category, so `Spent 42 groceries` needs no ceremony; a
+`#tag` handles the cases where one word is not enough. Amounts are integer
+minor units parsed by string surgery, never `parseFloat`, because a budget is a
+long chain of additions and that is exactly where float error compounds.
+
+Currencies are **never converted** — there is no exchange rate here to be right
+about, so a spend in another currency is left out of the total and the panel
+says so rather than adding 50 EUR to 50 USD and calling it 100 of something.
+
+Press <kbd>⌘K</kbd> from anywhere and type it the way you would say it —
+`i spent 33.50 on books`. The command box is forgiving; the line it writes to
+today's journal is the canonical `Spent 33.50 on books`, because the file is
+the only thing anything reads back.
+
+A ` ```chart ` block can ask the notes for its rows instead of carrying them:
+
+````markdown
+```chart pie
+title: This month
+source: spend
+group: category
+since: 2026-08-01
+```
+````
+
+That keeps §14's rule — a query is a declaration, not a program, and nothing is
+executed — but it costs §14's other property, which is worth saying plainly: a
+literal block is readable as data in nvim and in GitHub's web view, and a
+derived one is not. Changing `pie` to `table` is the way back. See
+DECISIONS.md §15 and §16.
+
 ## Layout
 
 ```

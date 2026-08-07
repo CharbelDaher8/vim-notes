@@ -344,13 +344,103 @@ below 3:1 against the page.
   §12 already skips fenced code. It also costs GitHub's native table rendering:
   inside a fence, a pipe table is legible text rather than a rendered table.
 
+## 15. The balance is a fold over the notes, never a stored number
+
+`Spent 42 groceries` is a line of markdown, like a TODO. So are `Balance: 5000
+as of 2026-08-01` and `Income: 3000/month`. What you have is arithmetic over
+them, recomputed on every render:
+
+```
+balance = opening + accrued income − spending since the opening date
+```
+
+**Why:** this was asked for as "it deducts from my balance", which is a
+mutation, and a stored total is the one thing §1 and §12 rule out. A number
+living outside the markdown becomes a second source of truth the moment a note
+is edited in nvim or a `git pull` brings a spend in from the phone — and unlike
+a stale todo, a wrong balance is silently wrong. Folding instead means
+correcting a three-week-old typo moves the figure, deleting the index costs
+nothing, and there is no write-back path to get wrong.
+
+**Consequences accepted:**
+
+- **The opening balance needs a date, and says so when it lacks one.** Income
+  accrues from that anchor, so an undated figure makes "how much do I have"
+  undefined rather than approximate. Undated is still allowed — a partial answer
+  beats an empty panel — and the pane states what it left out.
+- **Updating your balance is an append.** The latest `as of` date not in the
+  future wins, so the previous line stays as a record of what was true then.
+  That also decides the double-counting question: spending recorded before the
+  anchor is treated as already inside it, or every entry in the journal's
+  history would be subtracted twice.
+- **Income accrues in whole months.** A salary arrives on a day, in full. Pro
+  rata would make the balance drift upward every morning and be right only on
+  the last of the month.
+- **Money is integer minor units throughout**, parsed by string surgery rather
+  than `parseFloat`. A budget is a long chain of additions, which is exactly
+  where float error compounds into a total that is off by a cent with nothing in
+  the code looking wrong. The exponent is fixed at 2, which is wrong for JPY and
+  is invisible as long as formatting divides by the same constant.
+- **Currencies are never converted.** A rate is a fact about the world on a
+  particular day that this app does not have; spends in a currency the account
+  is not in are excluded from the total and reported. Same instinct as §14's pie
+  refusing a negative slice.
+- **A spend is not an annotation.** It is a separate array off the same line
+  scan, because it has an amount and a category and no `done` or `due` — and
+  because the todo panel and the graph read every annotation there is.
+- **Refunds are not modelled.** A negative amount fails to parse rather than
+  becoming a slice a pie must refuse. It wants its own keyword.
+- **Anchored, so `I spent 500` is not a spend.** The keyword rule from §12
+  applies unchanged. The command palette is allowed to be forgiving — it accepts
+  the natural phrasing and normalises it to `Spent 500 …` before writing — but
+  the file only ever contains the canonical form, because the file is the only
+  thing anything reads back.
+
+## 16. A data block may query the notes, at a cost §14 did not pay
+
+`source: spend` replaces a block's rows with the answer to a declarative query —
+`group`, `since`, `until`, `category`, all with closed sets of values.
+
+**The rule in §14 survives.** This is still parsed and drawn, never executed:
+five keys with validated values is a description of what is wanted, not a
+program. There is no expression language and nothing is evaluated.
+
+**What it costs is §14's other property, and it is a real regression.** A
+literal block is legible as data in nvim and in GitHub's web view; a derived one
+shows you what the picture was _of_, not what it said. For a design whose pitch
+is that the data outlives the app, that is worth naming rather than glossing.
+The mitigation is that the numbers are still in the repository — spread across
+the journal lines the query sums — and that flipping `type: pie` to
+`type: table` renders them inline in any viewer.
+
+**Implementation consequence:** the widget's `toDOM` is synchronous and the
+answer is not, so a derived block renders a placeholder and subscribes to a
+module-level data slot that the React layer feeds — the same pattern
+`local-writes.ts` uses to cross that boundary. Nothing is fetched until a widget
+subscribes, so a note with no derived block costs no query. Resolved rows are
+handed to the _existing_ parser rather than a parallel one, so a derived pie and
+a hand-written pie are built by one code path and get the disclosure table, the
+six-slice fold and the format options for free.
+
+**Rejected:** a budget pane and literal charts only, which is free and keeps
+§14 whole — but a budget note whose numbers you update by hand is a snapshot,
+and the thing that was asked for was a note that stays true.
+
 ## Open questions
 
 - **Hosting** is undecided. The stack ships as Docker Compose so the box can be
   chosen later.
 - **Recurring reminders** are not modelled. A reminder has an optional date and
   nothing else; anything repeating would need syntax that survives round-tripping
-  through plain markdown.
+  through plain markdown. **Recurring income has the same shape and the same
+  gap** (§15): `Income:` accrues monthly because monthly is the only period the
+  syntax can express, and weekly or fortnightly pay would need the same unsolved
+  round-tripping question answered first.
+- **One-off income** has no keyword. A gift, a refund and a sale are all real and
+  all currently unrecordable except by appending a corrected `Balance:` line —
+  which works, and loses the detail.
+- **Budgets, in the sense of limits**, do not exist. §15 records what was spent;
+  nothing says what was meant to be spent, so nothing can warn.
 - **Notifications** for due reminders do not exist. The reminder list is
   something you look at, not something that arrives.
 - **Offline editing** in the desktop app is deferred. Git does most of the work,

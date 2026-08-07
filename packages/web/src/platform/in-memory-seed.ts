@@ -10,6 +10,12 @@
  * asked -- a reminder with a due date and one without, a task in a note that is
  * not a journal so it has no day at all, and a `[[link]]` to a note that does
  * not exist, which is the state the editor has to draw differently.
+ *
+ * The budget note is the same idea for money: a dated opening balance, an
+ * income line, spends spread across the journal rather than gathered in one
+ * place, a `#tag` category beside bare-word ones, and derived blocks in all
+ * three states worth seeing -- one that draws, one flipped to a table, and one
+ * that is wrong on purpose.
  */
 export const SEED_NOTES: Record<string, string> = {
   'inbox.md': `# Inbox
@@ -36,6 +42,9 @@ do not corrupt each other.
 - [x] TODO draw the git topology in [[architecture]]
 - Reminder: renew the TLS certificate 2026-08-30
 
+Spent 60 groceries
+Spent 3.20 bus
+
 Tomorrow: the conflict dialog.
 `,
 
@@ -49,6 +58,12 @@ Wrote the editor. Notes on what surprised me:
 
 TODO measure the bundle again once vim is code-split
 Reminder: the domain expires 2026-07-31
+
+Spent 1200 rent
+Spent 42.50 groceries
+- Spent 8 coffee
+Spent 26.99 for a #hardware keyboard cable
+Spent 90 EUR wine
 
 See also [[reference/markdown]] and [[the graph view]], which is not written yet.
 `,
@@ -195,6 +210,71 @@ A block that cannot be drawn says why, on the line that caused it:
 month, revenue
 Jan, 120
 Feb, not yet
+\`\`\`
+`,
+  'budget.md': `# Budget
+
+Nothing here is stored. The balance below is folded from these lines every time
+this note is opened, so correcting a typo in a spend from three weeks ago moves
+it, and deleting the index costs nothing.
+
+Two figures the arithmetic cannot derive:
+
+Balance: 5000 USD as of 2026-07-01
+Income: 3000/month
+
+The date on the balance is load-bearing. Income accrues from it, and spending
+recorded *before* it is treated as already accounted for -- so updating your
+balance means appending a new line, not editing the old one. The old line stays
+as a record of what was true then.
+
+Everything else is a \`Spent\` line, in any note. These are usually typed into a
+daily as the day goes, or from anywhere with the command palette.
+
+Spent 15 stamps
+Spent 62.40 #eating-out dinner with sam
+
+The first word is the category, so \`Spent 42 groceries\` needs no ceremony. Use
+a \`#tag\` when the category is two words.
+
+## Where it goes
+
+A \`source:\` block asks the notes rather than carrying its own rows.
+
+\`\`\`chart pie
+title: This month
+source: spend
+group: category
+since: 2026-08-01
+format: currency
+currency: USD
+\`\`\`
+
+The same query as a table -- one word changed, and the numbers are readable in
+any markdown viewer that never heard of this app.
+
+\`\`\`chart table
+source: spend
+group: category
+since: 2026-08-01
+\`\`\`
+
+Grouped by month instead, over everything:
+
+\`\`\`chart bar
+title: Spending by month
+source: spend
+group: month
+format: currency
+currency: USD
+height: 180
+\`\`\`
+
+A block cannot have both a query and rows of its own:
+
+\`\`\`chart pie
+source: spend
+groceries, 42
 \`\`\`
 `,
 }
