@@ -14,6 +14,9 @@
 import type {
   AnnotationFilter,
   AnnotationRecord,
+  BudgetDeclarationRecord,
+  SpendFilter,
+  SpendRecord,
   ExpectedVersion,
   FileChangeEvent,
   ForceWrite,
@@ -123,6 +126,18 @@ export interface Platform {
   // server uses, which is what keeps the offline UI honest.
 
   annotations(filter?: AnnotationFilter): Promise<AnnotationRecord[]>
+
+  /** Logged expenses, most recent first. */
+  spends(filter?: SpendFilter): Promise<SpendRecord[]>
+
+  /**
+   * Every `Balance:` and `Income:` line, unresolved.
+   *
+   * Which one is current is arithmetic, and it stays on this side of the port
+   * in `budget-model.ts` -- the balance is a fold over the notes, not a number
+   * the server keeps.
+   */
+  budgetDeclarations(): Promise<BudgetDeclarationRecord[]>
 
   /** Links pointing *at* this note, which is the direction worth showing. */
   backlinks(path: NotePath): Promise<ResolvedLink[]>

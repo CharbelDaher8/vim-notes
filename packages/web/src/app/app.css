@@ -117,12 +117,24 @@
   padding: 0.35rem 0.35rem 0;
 }
 
+/*
+ * The tabs have to share whatever width the sidebar has been dragged to, and at
+ * four of them the last label was being clipped mid-word. They shrink and drop
+ * their padding before that happens; the icons keep each one recognisable once
+ * the text is short.
+ */
 .sidebar__tab {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.3rem;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   min-height: 2rem;
-  padding: 0 0.6rem;
+  padding: 0 0.45rem;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;

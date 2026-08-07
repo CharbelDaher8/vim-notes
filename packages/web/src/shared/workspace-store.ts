@@ -7,7 +7,7 @@ export interface RevealTarget {
   column?: number
 }
 
-export type SidebarPanel = 'files' | 'search' | 'tasks'
+export type SidebarPanel = 'files' | 'search' | 'tasks' | 'budget'
 
 /**
  * Returns false to cancel the navigation. The editor registers one so that

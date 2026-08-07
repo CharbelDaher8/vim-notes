@@ -23,6 +23,9 @@
 import type {
   AnnotationFilter,
   AnnotationRecord,
+  BudgetDeclarationRecord,
+  SpendFilter,
+  SpendRecord,
   ExpectedVersion,
   FileChangeEvent,
   ForceWrite,
@@ -86,6 +89,14 @@ export class TauriPlatform implements Platform {
 
   subscribeToChanges(listener: (event: FileChangeEvent) => void): Unsubscribe {
     return this.#notes.subscribeToChanges(listener)
+  }
+
+  spends(filter?: SpendFilter): Promise<SpendRecord[]> {
+    return this.#notes.spends(filter)
+  }
+
+  budgetDeclarations(): Promise<BudgetDeclarationRecord[]> {
+    return this.#notes.budgetDeclarations()
   }
 
   annotations(filter?: AnnotationFilter): Promise<AnnotationRecord[]> {

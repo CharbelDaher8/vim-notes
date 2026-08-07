@@ -30,6 +30,12 @@ function Icon({ size = 16, ...props }: IconProps & { d?: string }) {
 
 export const ChevronRight = (props: IconProps) => <Icon {...props} d="M9 6l6 6-6 6" />
 export const ChevronDown = (props: IconProps) => <Icon {...props} d="M6 9l6 6 6-6" />
+export const Wallet = (props: IconProps) => (
+  <Icon
+    {...props}
+    d="M3 7a2 2 0 0 1 2-2h12v4M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2M3 7h16a2 2 0 0 1 2 2v2h-5a2 2 0 0 0 0 4h5"
+  />
+)
 export const Menu = (props: IconProps) => <Icon {...props} d="M4 7h16M4 12h16M4 17h16" />
 export const Plus = (props: IconProps) => <Icon {...props} d="M12 5v14M5 12h14" />
 export const Trash = (props: IconProps) => (

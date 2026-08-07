@@ -19,6 +19,9 @@ import {
   parseNotePath,
   type AnnotationFilter,
   type AnnotationRecord,
+  type BudgetDeclarationRecord,
+  type SpendFilter,
+  type SpendRecord,
   type ChangeOrigin,
   type ContentHash,
   type ExpectedVersion,
@@ -42,7 +45,9 @@ import { byteLength, hashContent } from './content-hash'
 import {
   deriveAnnotations,
   deriveBacklinks,
+  deriveBudgetDeclarations,
   deriveGraph,
+  deriveSpends,
   isIndexable,
   type IndexedNote,
 } from './derive-index'
@@ -233,6 +238,16 @@ export class InMemoryPlatform implements Platform {
   async annotations(filter?: AnnotationFilter): Promise<AnnotationRecord[]> {
     await this.#settle()
     return deriveAnnotations(this.#notes(), filter)
+  }
+
+  async spends(filter?: SpendFilter): Promise<SpendRecord[]> {
+    await this.#settle()
+    return deriveSpends(this.#notes(), filter)
+  }
+
+  async budgetDeclarations(): Promise<BudgetDeclarationRecord[]> {
+    await this.#settle()
+    return deriveBudgetDeclarations(this.#notes())
   }
 
   async backlinks(path: NotePath): Promise<ResolvedLink[]> {

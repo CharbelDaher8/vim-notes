@@ -21,6 +21,9 @@ import {
   FORCE_WRITE,
   type AnnotationFilter,
   type AnnotationRecord,
+  type BudgetDeclarationRecord,
+  type SpendFilter,
+  type SpendRecord,
   type ExpectedVersion,
   type FileChangeEvent,
   type ForceWrite,
@@ -112,6 +115,14 @@ export class WebPlatform implements Platform {
   // under `index`, and the server is the side that gets to name things.
   // `outboundLinks` is deliberately not called -- the route exists, but
   // `Platform` does not expose it.
+
+  spends(filter: SpendFilter = {}): Promise<SpendRecord[]> {
+    return this.#client.index.spends.query(filter)
+  }
+
+  budgetDeclarations(): Promise<BudgetDeclarationRecord[]> {
+    return this.#client.index.budgetDeclarations.query()
+  }
 
   annotations(filter: AnnotationFilter = {}): Promise<AnnotationRecord[]> {
     return this.#client.index.annotations.query(filter)

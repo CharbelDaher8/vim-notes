@@ -1,7 +1,8 @@
+import { BudgetPane } from '../features/budget/budget-pane'
 import { SearchPane } from '../features/search/search-pane'
 import { TasksPane } from '../features/tasks/tasks-pane'
 import { TreePane } from '../features/tree/tree-pane'
-import { CheckSquare, SearchIcon } from '../shared/ui/icons'
+import { CheckSquare, SearchIcon, Wallet } from '../shared/ui/icons'
 import { useWorkspaceStore, type SidebarPanel } from '../shared/workspace-store'
 
 /**
@@ -14,6 +15,7 @@ const PANELS = [
   { id: 'files', label: 'Files', icon: null },
   { id: 'search', label: 'Search', icon: SearchIcon },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+  { id: 'budget', label: 'Budget', icon: Wallet },
 ] as const satisfies ReadonlyArray<{
   id: SidebarPanel
   label: string
@@ -28,7 +30,7 @@ export function Sidebar() {
     <aside
       className="sidebar"
       data-open={drawerOpen || undefined}
-      aria-label="Notes, search and tasks"
+      aria-label="Notes, search, tasks and budget"
     >
       <nav className="sidebar__tabs">
         {PANELS.map(({ id, label, icon: Icon }) => (
@@ -55,12 +57,20 @@ export function Sidebar() {
       </nav>
 
       {/*
-        Only the selected panel is mounted. The tasks pane queries the index on
-        mount, and keeping all three alive would have it refetching for a panel
-        nobody is looking at every time the notes change.
+        Only the selected panel is mounted. The tasks and budget panes query the
+        index on mount, and keeping all four alive would have them refetching for
+        a panel nobody is looking at every time the notes change.
       */}
       <div className="sidebar__panel">
-        {panel === 'files' ? <TreePane /> : panel === 'search' ? <SearchPane /> : <TasksPane />}
+        {panel === 'files' ? (
+          <TreePane />
+        ) : panel === 'search' ? (
+          <SearchPane />
+        ) : panel === 'tasks' ? (
+          <TasksPane />
+        ) : (
+          <BudgetPane />
+        )}
       </div>
     </aside>
   )
