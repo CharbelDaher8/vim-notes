@@ -12,6 +12,12 @@
  * browser for optimistic updates and on the server for the index.
  */
 
+import {
+  parseBudgetDeclaration,
+  parseSpendLine,
+  type BudgetDeclaration,
+  type SpendEntry,
+} from './budget'
 import type { NotePath } from './note-path'
 
 export type AnnotationKind = 'todo' | 'reminder'
@@ -51,6 +57,19 @@ export interface WikiLink {
 export interface NoteMarkup {
   annotations: Annotation[]
   links: WikiLink[]
+  /**
+   * Logged expenses.
+   *
+   * A separate array rather than a third `AnnotationKind`, because a spend is
+   * not a task wearing a different keyword. It has an amount and a category; it
+   * has no `done` and no `due`, and folding it into `Annotation` would mean two
+   * fields that are always null on one side and two that are always null on the
+   * other -- plus a budget entry appearing in the todo panel and in the graph,
+   * both of which read every annotation there is.
+   */
+  spends: SpendEntry[]
+  /** `Balance:` and `Income:` lines: the figures the fold cannot derive. */
+  budget: BudgetDeclaration[]
 }
 
 /**
@@ -84,6 +103,8 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/
 export function parseNoteMarkup(content: string): NoteMarkup {
   const annotations: Annotation[] = []
   const links: WikiLink[] = []
+  const spends: SpendEntry[] = []
+  const budget: BudgetDeclaration[] = []
 
   let fence: string | null = null
 
@@ -113,10 +134,19 @@ export function parseNoteMarkup(content: string): NoteMarkup {
     const annotation = parseAnnotation(raw, line)
     if (annotation !== null) annotations.push(annotation)
 
+    // The fence skip above covers these for free, which is worth more here than
+    // it is for todos: a note that documents the spend syntax, or a data block
+    // holding example rows, would otherwise log money the user never spent.
+    const spend = parseSpendLine(raw, line)
+    if (spend !== null) spends.push(spend)
+
+    const declaration = parseBudgetDeclaration(raw, line)
+    if (declaration !== null) budget.push(declaration)
+
     links.push(...parseLinks(raw, line))
   })
 
-  return { annotations, links }
+  return { annotations, links, spends, budget }
 }
 
 function parseAnnotation(raw: string, line: number): Annotation | null {

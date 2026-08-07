@@ -5,6 +5,7 @@ export * from './domain/note-path'
 export * from './domain/conflict'
 export * from './domain/errors'
 export * from './domain/note-markup'
+export * from './domain/budget'
 export * from './domain/journal-path'
 
 export * from './ports/common'
