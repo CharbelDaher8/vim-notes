@@ -1,7 +1,14 @@
 import { assertNotePath } from '@vim-notes/core'
 import { describe, expect, it } from 'vitest'
 
-import { deriveAnnotations, deriveBacklinks, deriveGraph, type IndexedNote } from './derive-index'
+import {
+  deriveAnnotations,
+  deriveBacklinks,
+  deriveBudgetDeclarations,
+  deriveGraph,
+  deriveSpends,
+  type IndexedNote,
+} from './derive-index'
 
 const note = (path: string, content: string): IndexedNote => ({
   path: assertNotePath(path),
@@ -200,5 +207,111 @@ describe('deriveGraph', () => {
 
     expect(new Set(todos.map((node) => node.id)).size).toBe(2)
     expect(todos.map((node) => node.line).sort()).toEqual([1, 2])
+  })
+})
+
+/**
+ * The corpus both index implementations are checked against.
+ *
+ * Exported so `memory-note-index.test.ts` on the server can assert the same
+ * facts about the same input. `derive-index.ts` promises to match that class
+ * decision for decision, and a promise nothing checks is a comment.
+ */
+export const SPEND_NOTES = [
+  note(
+    'journal/2026-08-01.md',
+    ['# Saturday', '', 'Spent 42.50 groceries', 'Spent 3 bus', 'TODO not a spend'].join('\n'),
+  ),
+  note('journal/2026-08-04.md', ['Spent 1200 rent', 'Spent 8 coffee'].join('\n')),
+  note('journal/2026-07-30.md', 'Spent 60 groceries'),
+  note(
+    'budget.md',
+    [
+      'Balance: 5000 as of 2026-08-01',
+      'Income: 3000/month',
+      '',
+      'Spent 15 stamps',
+      '',
+      '```',
+      'Spent 999 quoted, not spent',
+      '```',
+    ].join('\n'),
+  ),
+  // Backdated: written up in August, counts in July.
+  note('journal/2026-08-06.md', 'Spent 25 books 2026-07-15'),
+]
+
+describe('deriveSpends', () => {
+  it('finds every spend and skips fenced ones', () => {
+    expect(deriveSpends(SPEND_NOTES)).toHaveLength(7)
+  })
+
+  it('orders newest first with undated last', () => {
+    expect(deriveSpends(SPEND_NOTES).map((entry) => entry.on)).toEqual([
+      '2026-08-04',
+      '2026-08-04',
+      '2026-08-01',
+      '2026-08-01',
+      '2026-07-30',
+      '2026-07-15',
+      null,
+    ])
+  })
+
+  it('lets a written date beat the journal day', () => {
+    const backdated = deriveSpends(SPEND_NOTES).find((entry) => entry.category === 'books')
+
+    expect(backdated).toMatchObject({ on: '2026-07-15', day: '2026-08-06', date: '2026-07-15' })
+  })
+
+  it('gives a spend outside a journal a null day, and keeps it', () => {
+    const stamps = deriveSpends(SPEND_NOTES).find((entry) => entry.category === 'stamps')
+
+    expect(stamps).toMatchObject({ on: null, day: null, amountMinor: 1500 })
+  })
+
+  it('bounds on the effective date, not the note', () => {
+    const august = deriveSpends(SPEND_NOTES, { since: '2026-08-01', until: '2026-08-31' })
+
+    expect(august.map((entry) => entry.category)).toEqual(['rent', 'coffee', 'groceries', 'bus'])
+  })
+
+  /** Undated money is real money; it only drops out when a range is asked for. */
+  it('drops undated spends from a bounded query and only then', () => {
+    expect(deriveSpends(SPEND_NOTES, { since: '2020-01-01' }).some((e) => e.on === null)).toBe(
+      false,
+    )
+    expect(deriveSpends(SPEND_NOTES).some((entry) => entry.on === null)).toBe(true)
+  })
+
+  it('filters by category', () => {
+    expect(deriveSpends(SPEND_NOTES, { category: 'groceries' }).map((e) => e.amountMinor)).toEqual([
+      4250, 6000,
+    ])
+  })
+
+  it('takes the newest N when limited', () => {
+    expect(deriveSpends(SPEND_NOTES, { limit: 2 }).map((entry) => entry.category)).toEqual([
+      'rent',
+      'coffee',
+    ])
+  })
+})
+
+describe('deriveBudgetDeclarations', () => {
+  it('returns declarations in document order, with their note', () => {
+    expect(deriveBudgetDeclarations(SPEND_NOTES)).toEqual([
+      expect.objectContaining({
+        kind: 'balance',
+        amountMinor: 500_000,
+        asOf: '2026-08-01',
+        line: 1,
+      }),
+      expect.objectContaining({ kind: 'income', amountMinor: 300_000, period: 'month', line: 2 }),
+    ])
+  })
+
+  it('is empty when nothing declares one', () => {
+    expect(deriveBudgetDeclarations([note('a.md', 'Spent 5 tea')])).toEqual([])
   })
 })

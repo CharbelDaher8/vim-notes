@@ -113,6 +113,23 @@ export const annotationsInput = z.object({
   limit: z.number().int().min(1).max(1000).optional(),
 })
 
+export const spendsInput = z.object({
+  since: isoDaySchema.optional(),
+  until: isoDaySchema.optional(),
+  /**
+   * Lowercased, because that is what the parser stores. Sending `Groceries`
+   * would match nothing and look like the category was empty rather than
+   * misspelt, so it is normalised here instead of at the call site.
+   */
+  category: z
+    .string()
+    .min(1)
+    .max(64)
+    .transform((value) => value.toLowerCase())
+    .optional(),
+  limit: z.number().int().min(1).max(5000).optional(),
+})
+
 export const backlinksInput = z.object({
   path: notePathSchema,
 })
@@ -131,6 +148,7 @@ export type HistoryInput = z.infer<typeof historyInput>
 export type RestoreInput = z.infer<typeof restoreInput>
 export type SpawnTerminalInput = z.infer<typeof spawnTerminalInput>
 export type AnnotationsInput = z.infer<typeof annotationsInput>
+export type SpendsInput = z.infer<typeof spendsInput>
 export type BacklinksInput = z.infer<typeof backlinksInput>
 export type OutboundLinksInput = z.infer<typeof outboundLinksInput>
 

@@ -648,3 +648,157 @@ describe('MemoryNoteIndex staying current', () => {
     expect(errors).toEqual([])
   })
 })
+
+/**
+ * The same corpus `derive-index.test.ts` uses in the web package.
+ *
+ * Kept as a literal rather than imported across the package boundary -- the
+ * server does not depend on the web package and should not start now. What
+ * matters is that the assertions below state the same facts, so that the two
+ * implementations of one port cannot quietly disagree about what a spend is.
+ */
+const SPEND_FILES: Record<string, string> = {
+  'journal/2026-08-01.md': [
+    '# Saturday',
+    '',
+    'Spent 42.50 groceries',
+    'Spent 3 bus',
+    'TODO not a spend',
+  ].join('\n'),
+  'journal/2026-08-04.md': ['Spent 1200 rent', 'Spent 8 coffee'].join('\n'),
+  'journal/2026-07-30.md': 'Spent 60 groceries',
+  'budget.md': [
+    'Balance: 5000 as of 2026-08-01',
+    'Income: 3000/month',
+    '',
+    'Spent 15 stamps',
+    '',
+    '```',
+    'Spent 999 quoted, not spent',
+    '```',
+  ].join('\n'),
+  'journal/2026-08-06.md': 'Spent 25 books 2026-07-15',
+}
+
+describe('spends', () => {
+  it('finds every spend and skips fenced ones', async () => {
+    const { index } = await build(SPEND_FILES)
+    expect(await index.spends()).toHaveLength(7)
+  })
+
+  it('orders newest first with undated last', async () => {
+    const { index } = await build(SPEND_FILES)
+
+    expect((await index.spends()).map((entry) => entry.on)).toEqual([
+      '2026-08-04',
+      '2026-08-04',
+      '2026-08-01',
+      '2026-08-01',
+      '2026-07-30',
+      '2026-07-15',
+      null,
+    ])
+  })
+
+  it('lets a written date beat the journal day', async () => {
+    const { index } = await build(SPEND_FILES)
+    const backdated = (await index.spends()).find((entry) => entry.category === 'books')
+
+    expect(backdated).toMatchObject({ on: '2026-07-15', day: '2026-08-06' })
+  })
+
+  it('keeps a spend that belongs to no day', async () => {
+    const { index } = await build(SPEND_FILES)
+    const stamps = (await index.spends()).find((entry) => entry.category === 'stamps')
+
+    expect(stamps).toMatchObject({ on: null, day: null, amountMinor: 1500 })
+  })
+
+  it('bounds on the effective date, not the note', async () => {
+    const { index } = await build(SPEND_FILES)
+    const august = await index.spends({ since: '2026-08-01', until: '2026-08-31' })
+
+    expect(august.map((entry) => entry.category)).toEqual(['rent', 'coffee', 'groceries', 'bus'])
+  })
+
+  it('drops undated spends from a bounded query and only then', async () => {
+    const { index } = await build(SPEND_FILES)
+
+    expect((await index.spends({ since: '2020-01-01' })).some((e) => e.on === null)).toBe(false)
+    expect((await index.spends()).some((entry) => entry.on === null)).toBe(true)
+  })
+
+  it('filters by category', async () => {
+    const { index } = await build(SPEND_FILES)
+
+    expect((await index.spends({ category: 'groceries' })).map((e) => e.amountMinor)).toEqual([
+      4250, 6000,
+    ])
+  })
+
+  it('takes the newest N when limited', async () => {
+    const { index } = await build(SPEND_FILES)
+
+    expect((await index.spends({ limit: 2 })).map((entry) => entry.category)).toEqual([
+      'rent',
+      'coffee',
+    ])
+  })
+
+  /** The incremental path, which is the half `derive-index` does not have. */
+  it('picks up a spend added by the watcher', async () => {
+    const { store, watcher, index } = await build(SPEND_FILES)
+
+    await save(store, watcher, 'journal/2026-08-07.md', 'Spent 9.99 music')
+
+    expect((await index.spends({ limit: 1 }))[0]).toMatchObject({
+      amountMinor: 999,
+      category: 'music',
+      on: '2026-08-07',
+    })
+  })
+
+  it("drops a note's spends when it is deleted", async () => {
+    const { store, watcher, index } = await build(SPEND_FILES)
+
+    await remove(store, watcher, 'journal/2026-08-04.md')
+
+    expect((await index.spends()).map((entry) => entry.category)).not.toContain('rent')
+  })
+
+  it('replaces rather than accumulates when a note is edited', async () => {
+    const { store, watcher, index } = await build(SPEND_FILES)
+
+    await save(store, watcher, 'journal/2026-07-30.md', 'Spent 61 groceries')
+
+    expect((await index.spends({ category: 'groceries' })).map((e) => e.amountMinor)).toEqual([
+      4250, 6100,
+    ])
+  })
+})
+
+describe('budgetDeclarations', () => {
+  it('returns declarations in document order, with their note', async () => {
+    const { index } = await build(SPEND_FILES)
+
+    expect(await index.budgetDeclarations()).toEqual([
+      expect.objectContaining({
+        kind: 'balance',
+        amountMinor: 500_000,
+        asOf: '2026-08-01',
+        line: 1,
+      }),
+      expect.objectContaining({ kind: 'income', amountMinor: 300_000, period: 'month', line: 2 }),
+    ])
+  })
+
+  it('keeps every declaration, so the fold can pick the current one', async () => {
+    const { index } = await build({
+      'budget.md': ['Balance: 5000 as of 2026-01-01', 'Balance: 7200 as of 2026-08-01'].join('\n'),
+    })
+
+    expect((await index.budgetDeclarations()).map((entry) => entry.amountMinor)).toEqual([
+      500_000, 720_000,
+    ])
+  })
+})

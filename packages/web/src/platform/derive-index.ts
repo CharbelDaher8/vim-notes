@@ -27,6 +27,9 @@ import {
   type Annotation,
   type AnnotationFilter,
   type AnnotationRecord,
+  type BudgetDeclarationRecord,
+  type SpendFilter,
+  type SpendRecord,
   type GraphEdge,
   type GraphNode,
   type NoteGraph,
@@ -74,6 +77,54 @@ export function deriveAnnotations(
   records.sort(compareAnnotations)
 
   return filter.limit === undefined ? records : records.slice(0, filter.limit)
+}
+
+/** Matches `MemoryNoteIndex.spends` decision for decision; see the file header. */
+export function deriveSpends(
+  notes: readonly IndexedNote[],
+  filter: SpendFilter = {},
+): SpendRecord[] {
+  const records: SpendRecord[] = []
+  const bounded = filter.since !== undefined || filter.until !== undefined
+
+  for (const note of notes) {
+    const day = journalDateOf(note.path)
+
+    for (const entry of parseNoteMarkup(note.content).spends) {
+      // The line's own date wins over the note's day, so a spend logged late
+      // counts on the day it happened rather than the day it was written up.
+      const on = entry.date ?? day
+
+      if (on === null) {
+        // Undated money is real money. It only drops out when a range was asked
+        // for, because it belongs to no month and cannot honestly be put in one.
+        if (bounded) continue
+      } else {
+        if (filter.since !== undefined && on < filter.since) continue
+        if (filter.until !== undefined && on > filter.until) continue
+      }
+
+      if (filter.category !== undefined && entry.category !== filter.category) continue
+
+      records.push({ ...entry, path: note.path, day, on })
+    }
+  }
+
+  records.sort(compareSpends)
+
+  return filter.limit === undefined ? records : records.slice(0, filter.limit)
+}
+
+export function deriveBudgetDeclarations(notes: readonly IndexedNote[]): BudgetDeclarationRecord[] {
+  const records: BudgetDeclarationRecord[] = []
+
+  for (const note of notes) {
+    for (const declaration of parseNoteMarkup(note.content).budget) {
+      records.push({ ...declaration, path: note.path })
+    }
+  }
+
+  return records.sort(compareDeclarations)
 }
 
 export function deriveBacklinks(notes: readonly IndexedNote[], path: NotePath): ResolvedLink[] {
@@ -273,6 +324,24 @@ function compareAnnotations(a: AnnotationRecord, b: AnnotationRecord): number {
     return compareStrings(b.day, a.day)
   }
 
+  const byPath = compareStrings(a.path, b.path)
+  return byPath !== 0 ? byPath : a.line - b.line
+}
+
+/** Newest first, undated last, then path and line -- as `compareAnnotations`. */
+function compareSpends(a: SpendRecord, b: SpendRecord): number {
+  if (a.on !== b.on) {
+    if (a.on === null) return 1
+    if (b.on === null) return -1
+    return compareStrings(b.on, a.on)
+  }
+
+  const byPath = compareStrings(a.path, b.path)
+  return byPath !== 0 ? byPath : a.line - b.line
+}
+
+/** Document order. The fold decides which declaration wins, not this. */
+function compareDeclarations(a: BudgetDeclarationRecord, b: BudgetDeclarationRecord): number {
   const byPath = compareStrings(a.path, b.path)
   return byPath !== 0 ? byPath : a.line - b.line
 }

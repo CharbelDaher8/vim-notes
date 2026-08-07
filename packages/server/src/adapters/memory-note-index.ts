@@ -35,6 +35,11 @@ import {
   type Annotation,
   type AnnotationFilter,
   type AnnotationRecord,
+  type BudgetDeclaration,
+  type BudgetDeclarationRecord,
+  type SpendEntry,
+  type SpendFilter,
+  type SpendRecord,
   type FileChangeEvent,
   type FileWatcher,
   type GraphEdge,
@@ -85,6 +90,8 @@ interface IndexedNote {
   day: string | null
   annotations: Annotation[]
   links: WikiLink[]
+  spends: SpendEntry[]
+  budget: BudgetDeclaration[]
   /** Normalised link targets, kept so the reverse index can be undone exactly. */
   targets: Set<string>
 }
@@ -190,6 +197,53 @@ export class MemoryNoteIndex implements NoteIndex {
     records.sort(compareAnnotations)
 
     return filter.limit === undefined ? records : records.slice(0, filter.limit)
+  }
+
+  async spends(filter: SpendFilter = {}): Promise<SpendRecord[]> {
+    await this.ready
+
+    const records: SpendRecord[] = []
+    const bounded = filter.since !== undefined || filter.until !== undefined
+
+    for (const note of this.state.notes.values()) {
+      for (const entry of note.spends) {
+        // The line's own date wins over the note's day, so a spend logged late
+        // counts on the day it happened rather than the day it was written up.
+        const on = entry.date ?? note.day
+
+        if (on === null) {
+          // Undated money is real money. It only drops out when a range was
+          // asked for, because it belongs to no month and cannot honestly be
+          // put in one -- see the note on SpendFilter.
+          if (bounded) continue
+        } else {
+          if (filter.since !== undefined && on < filter.since) continue
+          if (filter.until !== undefined && on > filter.until) continue
+        }
+
+        if (filter.category !== undefined && entry.category !== filter.category) continue
+
+        records.push({ ...entry, path: note.path, day: note.day, on })
+      }
+    }
+
+    records.sort(compareSpends)
+
+    return filter.limit === undefined ? records : records.slice(0, filter.limit)
+  }
+
+  async budgetDeclarations(): Promise<BudgetDeclarationRecord[]> {
+    await this.ready
+
+    const records: BudgetDeclarationRecord[] = []
+
+    for (const note of this.state.notes.values()) {
+      for (const declaration of note.budget) records.push({ ...declaration, path: note.path })
+    }
+
+    records.sort(compareDeclarations)
+
+    return records
   }
 
   async backlinks(path: NotePath): Promise<ResolvedLink[]> {
@@ -528,6 +582,8 @@ function put(state: IndexState, path: NotePath, content: string): void {
     day: journalDateOf(path),
     annotations: markup.annotations,
     links: markup.links,
+    spends: markup.spends,
+    budget: markup.budget,
     targets,
   })
 
@@ -696,6 +752,28 @@ function compareAnnotations(a: AnnotationRecord, b: AnnotationRecord): number {
     return compareStrings(b.day, a.day)
   }
 
+  const byPath = compareStrings(a.path, b.path)
+  return byPath !== 0 ? byPath : a.line - b.line
+}
+
+/**
+ * Newest first, undated last, then by path and line -- the same shape as
+ * `compareAnnotations` and for the same reason: `limit` takes the first N, and
+ * "the last twenty things I spent money on" is the only useful reading of that.
+ */
+function compareSpends(a: SpendRecord, b: SpendRecord): number {
+  if (a.on !== b.on) {
+    if (a.on === null) return 1
+    if (b.on === null) return -1
+    return compareStrings(b.on, a.on)
+  }
+
+  const byPath = compareStrings(a.path, b.path)
+  return byPath !== 0 ? byPath : a.line - b.line
+}
+
+/** Document order. The fold decides which declaration wins, not this. */
+function compareDeclarations(a: BudgetDeclarationRecord, b: BudgetDeclarationRecord): number {
   const byPath = compareStrings(a.path, b.path)
   return byPath !== 0 ? byPath : a.line - b.line
 }

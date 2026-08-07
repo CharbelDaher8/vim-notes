@@ -1,3 +1,4 @@
+import type { BudgetDeclaration, SpendEntry } from '../domain/budget'
 import type { Annotation, AnnotationKind } from '../domain/note-markup'
 import type { NotePath } from '../domain/note-path'
 
@@ -20,6 +21,45 @@ export interface AnnotationRecord extends Annotation {
    * still a task; it just has no day to hang off in the graph.
    */
   day: string | null
+}
+
+export interface SpendRecord extends SpendEntry {
+  path: NotePath
+  /** The journal day of the note it was found in, or null. */
+  day: string | null
+  /**
+   * The date this spend actually counts on: the date written on the line if
+   * there is one, otherwise the note's journal day, otherwise null.
+   *
+   * Resolved here rather than left to each caller because every caller needs
+   * the same answer, and two of them working it out separately is two chances
+   * to disagree about which date wins. Null is a real state -- a spend in
+   * `projects/kitchen.md` with no date is money that left the account on a day
+   * nobody recorded. It still counts toward a balance; it just cannot be put in
+   * a month.
+   */
+  on: string | null
+}
+
+export interface BudgetDeclarationRecord extends BudgetDeclaration {
+  path: NotePath
+}
+
+/**
+ * All bounds are on `on`, and undated spends are only included when no bound is
+ * given at all.
+ *
+ * That asymmetry is the honest reading of a range query: asking for August
+ * cannot sensibly return money that belongs to no month, but asking for
+ * everything must not silently lose it.
+ */
+export interface SpendFilter {
+  /** Inclusive ISO lower bound. */
+  since?: string
+  /** Inclusive ISO upper bound. */
+  until?: string
+  category?: string
+  limit?: number
 }
 
 export interface ResolvedLink {
@@ -91,6 +131,19 @@ export interface AnnotationFilter {
 
 export interface NoteIndex {
   annotations(filter?: AnnotationFilter): Promise<AnnotationRecord[]>
+
+  /** Logged expenses, most recent first. */
+  spends(filter?: SpendFilter): Promise<SpendRecord[]>
+
+  /**
+   * Every `Balance:` and `Income:` line in the notes, in document order.
+   *
+   * All of them, not the ones that win. Deciding which balance is current is a
+   * fold over these and belongs with the rest of the arithmetic -- an index
+   * that pre-decided would have to be asked again with different rules the
+   * first time anyone wants the figure as of last month.
+   */
+  budgetDeclarations(): Promise<BudgetDeclarationRecord[]>
 
   /** Links pointing *at* this note, which is the useful direction. */
   backlinks(path: NotePath): Promise<ResolvedLink[]>
