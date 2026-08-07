@@ -17,6 +17,22 @@ import { notePathBasename, notePathParent, type NotePath, type SearchHit } from 
 import { groupHits } from './search-model'
 
 export type PaletteItem =
+  /**
+   * Something to *do* rather than somewhere to go.
+   *
+   * Commands sort above every result and the first one starts selected, so
+   * typing "spent 12 coffee" and pressing Enter records it without an arrow
+   * key. That ordering is the whole reason a command belongs in this list
+   * rather than in a mode of its own: a palette you have to put into the right
+   * mode first is slower than the note it was meant to save you opening.
+   */
+  | {
+      kind: 'command'
+      key: string
+      label: string
+      /** Shown dimmed beside the label -- what will actually happen. */
+      detail: string
+    }
   | {
       kind: 'note'
       key: string
@@ -36,7 +52,7 @@ export type PaletteItem =
     }
 
 export interface PaletteSection {
-  id: 'names' | 'contents'
+  id: 'commands' | 'names' | 'contents'
   heading: string
   items: PaletteItem[]
 }
@@ -61,9 +77,12 @@ export const DEFAULT_HIT_LIMIT = 40
 export function buildPaletteResults(input: {
   names: NotePath[]
   hits: SearchHit[]
+  /** Actions offered for this query, already decided by the caller. */
+  commands?: Extract<PaletteItem, { kind: 'command' }>[]
   hitLimit?: number
 }): PaletteResults {
   const limit = input.hitLimit ?? DEFAULT_HIT_LIMIT
+  const commandItems = input.commands ?? []
 
   const noteItems: PaletteItem[] = input.names.map((path) => ({
     kind: 'note',
@@ -93,12 +112,15 @@ export function buildPaletteResults(input: {
   }
 
   const sections: PaletteSection[] = []
+  if (commandItems.length > 0) {
+    sections.push({ id: 'commands', heading: 'Actions', items: commandItems })
+  }
   if (noteItems.length > 0) sections.push({ id: 'names', heading: 'Notes', items: noteItems })
   if (hitItems.length > 0) sections.push({ id: 'contents', heading: 'Contents', items: hitItems })
 
   return {
     sections,
-    items: [...noteItems, ...hitItems],
+    items: [...commandItems, ...noteItems, ...hitItems],
     totalHits: input.hits.length,
     shownHits: hitItems.length,
   }

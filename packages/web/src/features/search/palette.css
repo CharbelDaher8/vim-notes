@@ -108,8 +108,27 @@
   text-align: center;
 }
 
+.palette__message--error {
+  color: var(--danger, #e5484d);
+  text-align: left;
+  padding: 0.6rem 0.85rem;
+}
+
 .palette__section + .palette__section {
   border-top: 1px solid var(--border);
+}
+
+/*
+ * An action is not a destination, and pressing Enter on one changes a file. The
+ * accent on its icon is the only thing distinguishing it from the notes below
+ * at a glance, which is worth the two lines.
+ */
+.palette__option--command > svg {
+  color: var(--accent);
+}
+
+.palette__option--command .palette__dir {
+  font-family: var(--font-mono);
 }
 
 .palette__heading {

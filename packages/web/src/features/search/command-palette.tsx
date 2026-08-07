@@ -19,8 +19,12 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 
-import { FileIcon, SearchIcon } from '../../shared/ui/icons'
+import { FileIcon, SearchIcon, Wallet } from '../../shared/ui/icons'
 import { useWorkspaceStore } from '../../shared/workspace-store'
+import { formatMoney } from '../budget/budget-model'
+import { parseSpendCommand } from '../budget/spend-capture'
+import { useLogSpend } from '../budget/use-budget'
+import { todayIso } from '../tasks/tasks-model'
 import { useTree } from '../tree/use-tree'
 import { buildPaletteResults, moveSelection, selectedItem, type PaletteItem } from './palette-model'
 import { highlightPreview, matchFilenames } from './search-model'
@@ -57,9 +61,38 @@ export function CommandPalette() {
 
   const { data: hits, isFetching, error } = useSearch(options)
   const { data: tree } = useTree()
+  const logSpend = useLogSpend()
 
   const names = useMemo(() => matchFilenames(tree ?? [], debounced), [tree, debounced])
-  const results = useMemo(() => buildPaletteResults({ names, hits: hits ?? [] }), [names, hits])
+
+  /**
+   * Built from the *live* query rather than the debounced one.
+   *
+   * Search is debounced because it costs a ripgrep; parsing "spent 12 coffee"
+   * costs a regex, and making the action appear a beat after you finish typing
+   * it is exactly the lag that makes someone press Enter into the wrong row.
+   */
+  const spend = useMemo(() => parseSpendCommand(query, todayIso()), [query])
+
+  const commands = useMemo(
+    () =>
+      spend === null
+        ? []
+        : [
+            {
+              kind: 'command' as const,
+              key: 'command:spend',
+              label: `Log ${formatMoney(spend.entry.amountMinor, spend.entry.currency ?? 'USD')} · ${spend.entry.category}`,
+              detail: spend.line,
+            },
+          ],
+    [spend],
+  )
+
+  const results = useMemo(
+    () => buildPaletteResults({ names, hits: hits ?? [], commands }),
+    [names, hits, commands],
+  )
 
   const active = selectedItem(results.items, selection)
 
@@ -94,6 +127,18 @@ export function CommandPalette() {
   const close = () => useWorkspaceStore.getState().setPaletteOpen(false)
 
   const openItem = (item: PaletteItem) => {
+    if (item.kind === 'command') {
+      if (spend === null) return
+      // Closed before the write lands, not after. The palette's job is over
+      // the moment the command is chosen, and holding it open through a round
+      // trip over a tailnet reads as the key press having missed. A failure
+      // still surfaces -- `logSpend.error` is rendered on the next open, and
+      // the note is untouched either way.
+      close()
+      logSpend.mutate(spend)
+      return
+    }
+
     close()
 
     const workspace = useWorkspaceStore.getState()
@@ -174,8 +219,10 @@ export function CommandPalette() {
           <p className="palette__message" role="alert">
             {error.message}
           </p>
-        ) : debounced.trim() === '' ? (
-          <p className="palette__message">Type to find a note by name, or a phrase inside one.</p>
+        ) : results.items.length === 0 && debounced.trim() === '' ? (
+          <p className="palette__message">
+            Type to find a note, a phrase inside one, or “spent 12 coffee”.
+          </p>
         ) : results.items.length === 0 ? (
           isFetching ? null : (
             <p className="palette__message">No matches.</p>
@@ -189,15 +236,23 @@ export function CommandPalette() {
                 </p>
 
                 {section.items.map((item) =>
-                  item.kind === 'note'
-                    ? renderNote(item)
-                    : renderHit(item, debounced, options.caseSensitive),
+                  item.kind === 'command'
+                    ? renderCommand(item)
+                    : item.kind === 'note'
+                      ? renderNote(item)
+                      : renderHit(item, debounced, options.caseSensitive),
                 )}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {logSpend.error === null ? null : (
+        <p className="palette__message palette__message--error" role="alert">
+          {logSpend.error.message}
+        </p>
+      )}
 
       <footer className="palette__footer">
         <span className="palette__hints">
@@ -218,6 +273,20 @@ export function CommandPalette() {
       </footer>
     </dialog>
   )
+
+  function renderCommand(item: Extract<PaletteItem, { kind: 'command' }>) {
+    return (
+      <div
+        key={item.key}
+        {...optionProps(item)}
+        className="palette__option palette__option--command"
+      >
+        <Wallet size={14} />
+        <span className="palette__name">{item.label}</span>
+        <span className="palette__dir">{item.detail}</span>
+      </div>
+    )
+  }
 
   function renderNote(item: Extract<PaletteItem, { kind: 'note' }>) {
     return (

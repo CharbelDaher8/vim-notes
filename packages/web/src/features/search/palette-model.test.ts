@@ -172,3 +172,59 @@ describe('selection', () => {
     })
   })
 })
+
+describe('commands', () => {
+  const command = {
+    kind: 'command' as const,
+    key: 'command:spend',
+    label: 'Log $12.00 · coffee',
+    detail: 'Spent 12 coffee',
+  }
+
+  /** So Enter records it without an arrow key; that is the point of the row. */
+  it('sorts above every result and is selected first', () => {
+    const results = buildPaletteResults({
+      names: [notePath('coffee.md')],
+      hits: [],
+      commands: [command],
+    })
+
+    expect(results.items[0]).toMatchObject({ kind: 'command' })
+    expect(selectedItem(results.items, null)).toMatchObject({ key: 'command:spend' })
+  })
+
+  it('gets its own section, ahead of the others', () => {
+    const results = buildPaletteResults({
+      names: [notePath('coffee.md')],
+      hits: [],
+      commands: [command],
+    })
+
+    expect(results.sections.map((section) => section.id)).toEqual(['commands', 'names'])
+  })
+
+  it('adds no section when there is nothing to do', () => {
+    const results = buildPaletteResults({ names: [notePath('a.md')], hits: [] })
+
+    expect(results.sections.map((section) => section.id)).toEqual(['names'])
+    expect(results.items.every((item) => item.kind !== 'command')).toBe(true)
+  })
+
+  it('does not count towards the hit total', () => {
+    const results = buildPaletteResults({ names: [], hits: [], commands: [command] })
+
+    expect(results).toMatchObject({ totalHits: 0, shownHits: 0 })
+  })
+
+  it('is reachable by the arrow keys like anything else', () => {
+    const results = buildPaletteResults({
+      names: [notePath('coffee.md')],
+      hits: [],
+      commands: [command],
+    })
+
+    const next = moveSelection(results.items, 'command:spend', 1)
+    expect(next).not.toBe('command:spend')
+    expect(moveSelection(results.items, next, -1)).toBe('command:spend')
+  })
+})
