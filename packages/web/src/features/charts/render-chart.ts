@@ -252,6 +252,20 @@ function renderTable(spec: ChartSpec): HTMLElement {
  * "'n/a' is not a number" without being shown which row said so would mean
  * clicking back in to hunt for it.
  */
+/**
+ * Shown while a derived block is waiting for the index.
+ *
+ * Deliberately the same footprint as the error card rather than a spinner: a
+ * chart that flashes a spinner on every note open is noisier than one that
+ * simply appears, and the wait is a cache read in the common case.
+ */
+export function renderChartPending(): HTMLElement {
+  const card = element('div', 'chart-pending')
+  card.setAttribute('role', 'status')
+  card.append(element('p', 'chart-pending-message', 'Reading your notes…'))
+  return card
+}
+
 export function renderChartError(error: ChartError, body: string): HTMLElement {
   const card = element('div', 'chart-error')
   card.setAttribute('role', 'note')

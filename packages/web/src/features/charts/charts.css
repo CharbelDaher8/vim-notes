@@ -261,3 +261,20 @@
     display: block;
   }
 }
+
+/*
+ * The placeholder a derived block shows while the index is being read. Sized
+ * like the error card so the note does not reflow when the data lands.
+ */
+.chart-pending {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface);
+  color: var(--text-faint);
+}
+
+.chart-pending-message {
+  margin: 0;
+  font-size: var(--text-sm);
+}

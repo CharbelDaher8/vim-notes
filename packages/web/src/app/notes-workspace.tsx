@@ -1,3 +1,4 @@
+import { useChartDataProvider } from '../features/charts/use-chart-data'
 import { EditorPane } from '../features/editor/editor-pane'
 import { CommandPalette } from '../features/search/command-palette'
 import { useWorkspaceStore } from '../shared/workspace-store'
@@ -10,6 +11,8 @@ import { useNoteUrl } from './use-note-url'
 export function NotesWorkspace() {
   useAppShortcuts()
   useNoteUrl()
+  // Fetches nothing until a derived data block asks; see chart-data.ts.
+  useChartDataProvider()
 
   const drawerOpen = useWorkspaceStore((state) => state.drawerOpen)
 

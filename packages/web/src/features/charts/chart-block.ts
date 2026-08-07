@@ -140,9 +140,123 @@ const OPTION_KEYS = [
   'currency',
   'sort',
   'height',
+  // The query options. See `parseChartQuery` for what they cost.
+  'source',
+  'group',
+  'since',
+  'until',
+  'category',
 ] as const
 
 type OptionKey = (typeof OPTION_KEYS)[number]
+
+/**
+ * A block whose rows come from the notes instead of from the fence.
+ *
+ *     ```chart
+ *     type: pie
+ *     source: spend
+ *     group: category
+ *     since: 2026-08-01
+ *     ```
+ *
+ * **This is still parsed and drawn, never executed** -- DECISIONS.md §14's rule
+ * survives intact, because a query is a declaration of *what* is wanted and not
+ * a program that says how to get it. There is no expression language here: five
+ * keys with closed sets of values, every one of them validated below.
+ *
+ * What it does cost is §14's other property, and it is worth stating plainly:
+ * a literal block is legible as data in nvim and in GitHub's web view, and a
+ * derived one is not. Reading `source: spend` in a plain-text viewer tells you
+ * what the picture was of, not what it said. That is a real regression for a
+ * design whose whole pitch is that the data outlives the app -- mitigated only
+ * by the fact that the numbers *are* still in the repository, spread across the
+ * journal lines the query sums up.
+ */
+export interface ChartQuery {
+  /** Only spends exist so far; the key is named for the ones that might not. */
+  source: 'spend'
+  group: 'category' | 'month'
+  /** Inclusive ISO bounds, or null for unbounded. */
+  since: string | null
+  until: string | null
+  /** Restrict to one category, for a block about a single line of spending. */
+  category: string | null
+}
+
+const QUERY_SOURCES = ['spend'] as const
+const QUERY_GROUPS = ['category', 'month'] as const
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * The query a block declares, or null when it is self-contained.
+ *
+ * Separate from `parseChartBlock` because the caller has to *answer* the query
+ * before a spec can exist, and that answer is asynchronous. The split keeps the
+ * spec pipeline exactly as it was: the resolved rows are appended to the body
+ * as ordinary text, so a derived pie and a literal pie are built by the same
+ * code and cannot drift apart -- which is also what gives a derived block its
+ * disclosure table for free.
+ */
+export function parseChartQuery(info: string, body: string): ChartQuery | ChartError | null {
+  if (parseChartInfo(info) === null) return null
+
+  const options = readOptions(body)
+  const source = options.get('source')
+  if (source === undefined) return null
+
+  if (!isOneOf(source.value.toLowerCase(), QUERY_SOURCES)) {
+    return {
+      message: `Unknown source '${source.value}'. Try: ${QUERY_SOURCES.join(', ')}.`,
+      line: source.line,
+    }
+  }
+
+  const group = options.get('group')
+  const grouping = group === undefined ? 'category' : group.value.toLowerCase()
+  if (!isOneOf(grouping, QUERY_GROUPS)) {
+    return {
+      message: `Unknown group '${group?.value ?? ''}'. Try: ${QUERY_GROUPS.join(', ')}.`,
+      line: group?.line ?? -1,
+    }
+  }
+
+  const since = readDate(options.get('since'))
+  if (since !== null && 'message' in since) return since
+
+  const until = readDate(options.get('until'))
+  if (until !== null && 'message' in until) return until
+
+  const category = options.get('category')
+
+  return {
+    source: 'spend',
+    group: grouping,
+    since: since?.value ?? null,
+    until: until?.value ?? null,
+    category:
+      category === undefined ? (category ?? null) : category.value.trim().toLowerCase() || null,
+  }
+}
+
+function readDate(option: Option | undefined): { value: string } | ChartError | null {
+  if (option === undefined) return null
+
+  const value = option.value.trim()
+  // Only a literal day. `last month` and friends would need a clock, and a
+  // block whose meaning changes with the date it is read on is a different and
+  // much larger promise than this one.
+  if (!ISO_DAY.test(value)) {
+    return { message: `'${value}' is not a date. Write it as YYYY-MM-DD.`, line: option.line }
+  }
+
+  return { value }
+}
+
+function isOneOf<T extends string>(value: string, allowed: readonly T[]): value is T {
+  return (allowed as readonly string[]).includes(value)
+}
 
 /**
  * A line that looks like an option: an identifier, a colon, then anything.
@@ -167,12 +281,76 @@ const PIPE_SEPARATOR = /^[\s|:-]+$/
  */
 const NUMERIC_NOISE = /[\s,$£€]/g
 
-export function parseChartBlock(info: string, body: string): ChartParse {
+/** Rows a caller resolved for a `source:` block, in place of the fence's own. */
+export interface ResolvedRows {
+  columns: string[]
+  rows: string[][]
+}
+
+export function parseChartBlock(info: string, body: string, resolved?: ResolvedRows): ChartParse {
   const claimed = parseChartInfo(info)
   if (claimed === null) return fail('Not a data block.', -1)
 
+  const header = scanOptions(body)
+  if (header.error !== null) return { ok: false, error: header.error }
+
+  const { options, dataStart } = header
+  const dataLines = body.split('\n').slice(dataStart)
+
+  const type = resolveType(claimed.type, options)
+  if (type.ok === false) return type
+
+  const hasRows = dataLines.some((line) => line.trim() !== '')
+
+  if (options.has('source')) {
+    // Rows and a query are two answers to one question, and picking either
+    // silently would make the other look broken. Better to say so.
+    if (hasRows) return fail('This block has both `source:` and rows. Remove one.', dataStart)
+
+    // The caller has not answered the query. Reachable only through a direct
+    // call -- the widget resolves first and shows a placeholder meanwhile.
+    if (resolved === undefined) return fail('This block is still loading its data.', -1)
+
+    // An empty result is an answer, not a mistake in the block, so it says so
+    // in those terms rather than "no data, add rows below".
+    if (resolved.rows.length === 0) return fail('Nothing matched this query.', -1)
+
+    return buildSpec(
+      type.value,
+      // Every row came from the index rather than from a line of the block, so
+      // there is no source line an error could point at.
+      { columns: resolved.columns, rows: resolved.rows, rowLines: resolved.rows.map(() => -1) },
+      options,
+    )
+  }
+
+  const table = readTable(dataLines, dataStart)
+  if (table.ok === false) return table
+
+  return buildSpec(type.value, table.value, options)
+}
+
+interface OptionScan {
+  options: Map<OptionKey, Option>
+  /** Index of the first line below the header. */
+  dataStart: number
+  /** The first thing wrong with the header, or null. */
+  error: ChartError | null
+}
+
+/**
+ * The `key: value` header, and where it ends.
+ *
+ * Shared by `parseChartBlock` and `parseChartQuery` so the two cannot disagree
+ * about which lines are options -- the query needs to read `source` out of a
+ * block the spec parser may go on to reject for an unrelated reason, so it
+ * collects everything it can and reports the first problem rather than
+ * stopping at it.
+ */
+function scanOptions(body: string): OptionScan {
   const lines = body.split('\n')
-  const options = new Map<OptionKey, { value: string; line: number }>()
+  const options = new Map<OptionKey, Option>()
+  let error: ChartError | null = null
 
   let cursor = 0
   for (; cursor < lines.length; cursor += 1) {
@@ -185,23 +363,25 @@ export function parseChartBlock(info: string, body: string): ChartParse {
     if (match === null) break
 
     const key = (match[1] ?? '').toLowerCase()
+
     if (!isOptionKey(key)) {
-      return fail(`Unknown option '${match[1] ?? ''}'.${suggest(key)}`, cursor)
+      error ??= { message: `Unknown option '${match[1] ?? ''}'.${suggest(key)}`, line: cursor }
+      continue
     }
-    if (options.has(key)) return fail(`'${key}' is set twice.`, cursor)
+    if (options.has(key)) {
+      error ??= { message: `'${key}' is set twice.`, line: cursor }
+      continue
+    }
 
     options.set(key, { value: (match[2] ?? '').trim(), line: cursor })
   }
 
-  const dataLines = lines.slice(cursor)
+  return { options, dataStart: cursor, error }
+}
 
-  const type = resolveType(claimed.type, options)
-  if (type.ok === false) return type
-
-  const table = readTable(dataLines, cursor)
-  if (table.ok === false) return table
-
-  return buildSpec(type.value, table.value, options)
+/** The header alone, for callers that only need the options. */
+function readOptions(body: string): Map<OptionKey, Option> {
+  return scanOptions(body).options
 }
 
 interface Option {

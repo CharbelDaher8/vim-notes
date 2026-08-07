@@ -23,8 +23,16 @@
 import { StateField, type Extension, type Range, type Text } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 
-import { parseChartBlock, parseChartInfo } from './chart-block'
-import { renderChart, renderChartError } from './render-chart'
+import {
+  parseChartBlock,
+  parseChartInfo,
+  parseChartQuery,
+  type ChartParse,
+  type ChartQuery,
+} from './chart-block'
+import { chartData, subscribeChartData } from './chart-data'
+import { resolveChartQuery } from './derived-rows'
+import { renderChart, renderChartError, renderChartPending } from './render-chart'
 
 import './charts.css'
 
@@ -113,9 +121,18 @@ class ChartWidget extends WidgetType {
    * The editor asks for this before anything is measured, so that scrolling
    * past an unrendered chart does not jump. A wrong guess is corrected on
    * measurement; no guess at all makes the scrollbar lurch.
+   *
+   * A derived block is probed with one placeholder row rather than special
+   * cased, because its `height:` and `type:` are ordinary options and the
+   * existing parser is the thing that knows how to read them.
    */
   override get estimatedHeight(): number {
-    const parsed = parseChartBlock(this.info, this.body)
+    const query = queryOf(this.info, this.body)
+    const parsed =
+      query === null
+        ? parseChartBlock(this.info, this.body)
+        : parseChartBlock(this.info, this.body, { columns: ['label', 'value'], rows: [['—', '1']] })
+
     if (parsed.ok === false) return 64
     return parsed.spec.type === 'table' ? -1 : parsed.spec.height + 76
   }
@@ -133,13 +150,29 @@ class ChartWidget extends WidgetType {
       const width = Math.max(240, Math.floor(available) - CARD_INSET)
       drawnAt = width
 
-      const parsed = parseChartBlock(this.info, this.body)
+      const parsed = this.parse()
+
+      if (parsed === 'pending') {
+        host.replaceChildren(renderChartPending())
+        return
+      }
+
       host.replaceChildren(
         parsed.ok ? renderChart(parsed.spec, width) : renderChartError(parsed.error, this.body),
       )
     }
 
     draw()
+
+    /**
+     * A derived block redraws when the notes change, not only when its own text
+     * does -- which is the whole point of it. `eq` deliberately still compares
+     * only the block's text, so the widget survives edits elsewhere in the note
+     * and updates itself from here instead of being rebuilt.
+     */
+    if (queryOf(this.info, this.body) !== null) {
+      unsubscribers.set(host, subscribeChartData(draw))
+    }
 
     /**
      * Clicking the picture puts the cursor back in the text that made it.
@@ -193,9 +226,34 @@ class ChartWidget extends WidgetType {
     return host
   }
 
+  /**
+   * The block's spec, or `'pending'` while a query has nothing to answer with.
+   *
+   * A malformed query is returned as an ordinary parse error so it is drawn in
+   * the same place, and with the same look, as every other mistake in a block.
+   */
+  private parse(): ChartParse | 'pending' {
+    const query = parseChartQuery(this.info, this.body)
+
+    if (query !== null && 'message' in query) return { ok: false, error: query }
+    if (query === null) return parseChartBlock(this.info, this.body)
+
+    const data = chartData()
+    if (data === null) return 'pending'
+
+    return parseChartBlock(
+      this.info,
+      this.body,
+      resolveChartQuery(query, data.spends, data.currency),
+    )
+  }
+
   override destroy(dom: HTMLElement): void {
     observers.get(dom)?.disconnect()
     observers.delete(dom)
+
+    unsubscribers.get(dom)?.()
+    unsubscribers.delete(dom)
   }
 
   /**
@@ -216,6 +274,15 @@ const CARD_INSET = 30
 const RESIZE_THRESHOLD = 8
 
 const observers = new WeakMap<HTMLElement, ResizeObserver>()
+
+/** Data subscriptions, kept beside the observers and torn down with them. */
+const unsubscribers = new WeakMap<HTMLElement, () => void>()
+
+/** The query a block declares, ignoring a malformed one. */
+function queryOf(info: string, body: string): ChartQuery | null {
+  const query = parseChartQuery(info, body)
+  return query === null || 'message' in query ? null : query
+}
 
 function buildChartDecorations(doc: Text, ranges: readonly { from: number; to: number }[]) {
   const decorations: Range<Decoration>[] = []
